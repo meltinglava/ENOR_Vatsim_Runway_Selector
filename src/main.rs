@@ -28,4 +28,3 @@ async fn main() {
     let no_runways_in_use = airports.airports_without_runway_config();
     dbg!(no_runways_in_use);
 }
-

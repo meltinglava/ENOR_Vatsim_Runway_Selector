@@ -9,7 +9,6 @@ pub(crate) struct Config {
     enor_file_prefix: String,
 }
 
-
 impl Config {
     pub fn find_euroscope_config_folder() -> Option<Self> {
         let sct_path = search_for_euroscope_newest_sct_file()?;
@@ -26,6 +25,7 @@ impl Config {
         self.euroscope_config_folder.join(format!("{}.sct", self.enor_file_prefix))
     }
 
+    #[allow(dead_code)]
     pub fn get_rwy_file_path(&self) -> PathBuf {
         self.euroscope_config_folder.join(format!("{}.rwy", self.enor_file_prefix))
     }
@@ -54,7 +54,7 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
             .filter(|e| {
                 let name = e.file_name().to_string_lossy();
                 let Some(extension) = e.path().extension() else {return false;};
-                name.starts_with("ENOR") || extension == "sct"
+                name.starts_with("ENOR") && extension == "sct"
             })
             .map(|e| e.path().to_path_buf())
     })
@@ -68,5 +68,5 @@ fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
     // example file name: ENOR-Norway-NC_20250612121259-241301-0006.sct
     let file_name = path.as_ref().file_name().unwrap().to_string_lossy();
     let time_str = file_name.split('-').nth(2).unwrap().split_once('_').unwrap().1;
-    DateTime::strptime(time_str, "%Y%m%d%H%M%S").unwrap()
+    DateTime::strptime("%Y%m%d%H%M%S", time_str).unwrap()
 }
