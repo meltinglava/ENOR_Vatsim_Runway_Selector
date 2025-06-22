@@ -1,9 +1,9 @@
 use indexmap::IndexMap;
 use itertools::{Itertools, MinMaxResult::{MinMax, NoElements, OneElement}};
-use jiff::{tz::TimeZone, Zoned};
+use jiff::Zoned;
 use rust_flightweather::{metar::Metar, types::{CloudLayer, Clouds, Data, Visibility}};
 
-use crate::metar::calculate_max_headwind;
+use crate::metar::{calculate_max_crosswind, calculate_max_headwind};
 use crate::runway::{Runway, RunwayUse};
 
 #[derive(Debug)]
@@ -26,7 +26,7 @@ impl Airport {
         if self.icao == "ENGM" {
             Some(self.set_runway_for_engm())
         } else if self.icao == "ENZV" {
-            return None;
+            Some(self.set_runway_for_enzv())
         } else if self.runways.len() == 1 {
             self.internal_set_runway_based_on_metar_wind(0)
         } else {
@@ -149,5 +149,51 @@ impl Airport {
             },
         }
         map
+    }
+
+    fn set_runway_for_enzv(&self) -> IndexMap<String, RunwayUse> {
+        let main_runway_index = self.runways.iter().enumerate().filter(|(_, runway)| {
+            runway.runways.iter().any(|dir| {
+                dir.identifier == "18"
+            })
+        }).map(|(i, _)| i).next().unwrap();
+        let main_runway = match self.internal_set_runway_based_on_metar_wind(main_runway_index) {
+            Some(rwy) => rwy.keys().next().unwrap().to_string(),
+            None => "18".to_string(),
+        };
+
+        let default_fallback = IndexMap::from([
+            (main_runway.clone(), RunwayUse::Both),
+        ]);
+
+        let main_runway_direction = self.runways[main_runway_index].runways.iter().find(|dir| dir.identifier == main_runway).unwrap();
+
+        if let Some(metar) = self.metar.as_ref() {
+            let crosswind_main_runway = calculate_max_crosswind(&main_runway_direction, &metar.wind);
+            if crosswind_main_runway.is_none() {
+                return default_fallback;
+            }
+            if let Some(crosswind) = crosswind_main_runway {
+                if crosswind.as_knots() < 15.0 {
+                    // If crosswind is below 15 knots, we can use the main runway
+                    return default_fallback;
+                }
+                let secondary_runway_index = !main_runway_index;
+                let secondary_runway_crosswind = calculate_max_crosswind(&self.runways[secondary_runway_index].runways[0], &metar.wind).unwrap();
+                let secondary_runway = match self.internal_set_runway_based_on_metar_wind(secondary_runway_index) {
+                    Some(rwy) => rwy.keys().next().unwrap().to_string(),
+                    None => return default_fallback,
+                };
+                if secondary_runway_crosswind < crosswind {
+                    // If the secondary runway has a lower crosswind, we use it
+                    let mut map = IndexMap::new();
+                    map.insert(secondary_runway, RunwayUse::Both);
+                    return map;
+                } else {
+                    return default_fallback;
+                }
+            }
+        }
+        default_fallback
     }
 }
