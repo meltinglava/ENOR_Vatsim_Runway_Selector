@@ -1,4 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
+use std::io::Read;
 use std::ops::{Index, IndexMut};
 
 use crate::airport::Airport;
@@ -21,12 +22,13 @@ impl Airports {
         self.airports.insert(airport.icao.clone(), airport);
     }
 
-    pub fn fill_known_airports(&mut self) {
-        let known = include_str!("../runway.txt");
+    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R) {
+        let mut sct_file = String::new();
+        reader.read_to_string(&mut sct_file).expect("Failed to read SCT file");
         let ignored = include_str!("../ignore_airports.txt");
         let ignored_set: IndexSet<_> = ignored.lines().collect();
 
-        for line in known.lines().skip(1) {
+        for line in sct_file.lines().skip_while(|line| *line != "[RUNWAY]").skip(1).take_while(|line| !line.is_empty()) {
             let parts: Vec<_> = line.split_whitespace().collect();
             let icao = *parts.last().unwrap();
             if ignored_set.contains(icao) {
@@ -137,5 +139,25 @@ impl Index<&str> for Airports {
 impl IndexMut<&str> for Airports {
     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
         &mut self.airports[index]
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    #[test]
+    fn make_test_airport() {
+        let mut ap = Airports::new();
+        let mut reader = std::io::Cursor::new(include_str!("../runway.txt"));
+        ap.fill_known_airports(&mut reader);
+        assert_eq!(ap.airports.len(), 51);
+    }
+
+    #[test]
+    fn test_name() {
+
     }
 }

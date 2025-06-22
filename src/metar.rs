@@ -92,7 +92,8 @@ mod tests {
 
     fn make_test_airport(icao: &str, metar: &str) -> Airport {
         let mut ap = Airports::new();
-        ap.fill_known_airports();
+        let mut reader = std::io::Cursor::new(include_str!("../runway.txt"));
+        ap.fill_known_airports(&mut reader);
         let mut ap = ap.airports.swap_remove(icao).unwrap();
         let metar = Metar::parse(metar).unwrap();
         ap.metar = Some(metar);
