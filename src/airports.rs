@@ -1,6 +1,10 @@
 use indexmap::{IndexMap, IndexSet};
-use std::io::Read;
-use std::ops::{Index, IndexMut};
+use encoding::{
+    all::{ISO_8859_1, UTF_8},
+    DecoderTrap, Encoding,
+};
+
+use std::{io::Read, ops::{Index, IndexMut}};
 
 use crate::airport::Airport;
 use crate::atis::find_runway_in_use_from_atis;
@@ -23,8 +27,7 @@ impl Airports {
     }
 
     pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R) {
-        let mut sct_file = String::new();
-        reader.read_to_string(&mut sct_file).expect("Failed to read SCT file");
+        let sct_file = read_with_encoings(reader).expect("Failed to read SCT file");
         let ignored = include_str!("../ignore_airports.txt");
         let ignored_set: IndexSet<_> = ignored.lines().collect();
 
@@ -142,6 +145,20 @@ impl IndexMut<&str> for Airports {
     }
 }
 
+fn read_with_encoings<R: Read>(reader: &mut R) -> Result<String, Box<dyn std::error::Error>> {
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+
+    if let Ok(text) = UTF_8.decode(&buffer, DecoderTrap::Strict) {
+        return Ok(text);
+    }
+
+    if let Ok(text) = ISO_8859_1.decode(&buffer, DecoderTrap::Strict) {
+        return Ok(text);
+    }
+
+    Err("Failed to decode the input".into())
+}
 
 #[cfg(test)]
 mod tests {
