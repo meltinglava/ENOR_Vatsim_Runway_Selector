@@ -22,6 +22,7 @@ impl Airports {
         }
     }
 
+    #[allow(dead_code)] // used in tests
     pub fn add_airport(&mut self, airport: Airport) {
         self.airports.insert(airport.icao.clone(), airport);
     }
@@ -104,6 +105,9 @@ impl Airports {
 
     pub fn select_runways_in_use(&mut self) {
         for airport in self.airports.values_mut() {
+            if !airport.runways_in_use.is_empty() {
+                continue; // Already set by ATIS
+            }
             if let Some(runways_in_use) = airport.set_runway_based_on_metar_wind() {
                 airport.runways_in_use = runways_in_use;
             }

@@ -7,6 +7,7 @@ pub fn diff_angle(a: u16, b: u16) -> u16 {
     }
 }
 
+#[allow(dead_code)]
 pub fn diff_rotation(a: u16, b: u16) -> u16 {
     let diff = a as i16 - b as i16;
     if diff < 0 {

@@ -21,10 +21,9 @@ pub async fn get_metars() -> Result<Vec<Metar>, Box<dyn std::error::Error>> {
     Ok(values)
 }
 
-#[allow(unused)]
-pub fn calculate_max_crosswind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<WindSpeed> {
+pub fn calculate_max_crosswind(runway: &crate::runway::RunwayDirection, wind: &Wind) -> Option<WindSpeed> {
     let track = runway.degrees;
-    let strength = wind.gusting.or(wind.speed.as_option().cloned())?;
+    let strength = wind.gusting.clone().or(wind.speed.as_option().cloned())?;
 
     let factor = if let Some((Data::Known(start), Data::Known(end))) = wind.varying {
         let cross = [(track + 90) % 360, (track + 270) % 360];
@@ -109,7 +108,7 @@ mod tests {
             varying: None,
         };
         let runway = RunwayDirection { degrees: 360, identifier: "36".into() };
-        let crosswind = calculate_max_crosswind(&runway, wind).unwrap();
+        let crosswind = calculate_max_crosswind(&runway, &wind).unwrap();
         match crosswind {
             WindSpeed::Knot(val) => assert!((val as f64 - 10.0).abs() < 0.1),
             _ => panic!("Expected knots"),
