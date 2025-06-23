@@ -1,8 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{error::Error, fs::OpenOptions, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
+use itertools::Itertools;
+use tracing::warn;
 use directories::BaseDirs;
 use jiff::civil::DateTime;
 use walkdir::WalkDir;
+
+use crate::{airports::Airports, runway::RunwayUse};
 
 pub(crate) struct Config {
     euroscope_config_folder: PathBuf,
@@ -25,10 +29,66 @@ impl Config {
         self.euroscope_config_folder.join(format!("{}.sct", self.enor_file_prefix))
     }
 
-    #[allow(dead_code)]
     pub fn get_rwy_file_path(&self) -> PathBuf {
         self.euroscope_config_folder.join(format!("{}.rwy", self.enor_file_prefix))
     }
+
+    pub fn write_runways_to_euroscope_rwy_file(&self, airports: &Airports) -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .truncate(false)
+            .open(self.get_rwy_file_path())?;
+
+        let start_of_file = read_active_airportt(&mut file)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.set_len(0)?;
+        write_runway_file(&mut file, airports, &start_of_file)
+    }
+}
+
+#[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
+pub fn read_active_airportt<T: Read>(rwy_file: &mut T) -> io::Result<String> {
+    let reader = BufReader::new(rwy_file);
+
+    reader
+        .lines()
+        .take_while(|l| {
+            match l {
+                Ok(l) => l.starts_with("ACTIVE_AIRPORT:"),
+                Err(_) => false,
+            }
+        })
+        .intersperse_with(|| Ok("\n".to_string()))
+        .collect::<io::Result<String>>()
+}
+
+fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> Result<(), Box<dyn Error>> {
+
+    let mut writer = BufWriter::new(rwy_file);
+    writeln!(writer, "{}", start_of_file)?;
+
+    for airport in airports.airports.values() {
+        if airport.runways.is_empty() {
+            warn!("No runways for airport {}", airport.icao);
+            continue;
+        }
+
+        for (runway, usage) in &airport.runways_in_use {
+            let flags = match usage {
+                RunwayUse::Departing => vec![1],
+                RunwayUse::Arriving => vec![0],
+                RunwayUse::Both => vec![1, 0],
+            };
+
+            for flag in flags {
+                writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
@@ -69,4 +129,19 @@ fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
     let file_name = path.as_ref().file_name().unwrap().to_string_lossy();
     let time_str = file_name.split('-').nth(2).unwrap().split_once('_').unwrap().1;
     DateTime::strptime("%Y%m%d%H%M%S", time_str).unwrap()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_active_airports() {
+        let data = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0\nACTIVE_RUNWAY:ENZV:18:1\nACTIVE_RUNWAY:ENZV:18:0\n";
+        let mut cursor = io::Cursor::new(data);
+        let result = read_active_airportt(&mut cursor).unwrap();
+        let expected = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0";
+        assert_eq!(result, expected);
+    }
 }

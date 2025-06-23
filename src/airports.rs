@@ -133,6 +133,10 @@ impl Airports {
     pub fn identifiers(&self) -> IndexSet<String> {
         self.airports.keys().cloned().collect()
     }
+
+    pub fn sort(&mut self) {
+        self.airports.sort_unstable_keys();
+    }
 }
 
 impl Index<&str> for Airports {
