@@ -1,28 +1,53 @@
 use std::{error::Error, fs::OpenOptions, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
+use config::{Config, ConfigError};
+use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use tracing::warn;
-use directories::BaseDirs;
+use directories::{BaseDirs, ProjectDirs, UserDirs};
 use jiff::civil::DateTime;
 use walkdir::WalkDir;
 
 use crate::{airports::Airports, runway::RunwayUse};
 
-pub(crate) struct Config {
+
+#[derive(Debug)]
+pub(crate) struct ESConfig {
     euroscope_config_folder: PathBuf,
     enor_file_prefix: String,
+    config: Configurable,
 }
 
-impl Config {
+#[derive(Debug, Serialize, Deserialize)]
+#[skip_serializing_none]
+struct Configurable {
+    ignore_airports: IndexSet<String>,
+    default_runways: IndexMap<String, u8>,
+    euroscope_config_folder: Option<PathBuf>,
+}
+
+impl ESConfig {
     pub fn find_euroscope_config_folder() -> Option<Self> {
-        let sct_path = search_for_euroscope_newest_sct_file()?;
+        let config = setup_configuration().unwrap();
+        let sct_path = search_for_euroscope_newest_sct_file().or_else(|| config.euroscope_config_folder.clone())?;
         let enor_file_prefix = sct_path.file_stem()?
             .to_string_lossy()
             .to_string();
         Some(Self {
             euroscope_config_folder: sct_path.parent()?.to_path_buf(),
             enor_file_prefix,
+            config,
         })
+    }
+
+    pub fn get_ignore_airports(&self) -> &IndexSet<String> {
+        &self.config.ignore_airports
+    }
+
+    pub fn get_default_runways(&self) -> &IndexMap<String, u8> {
+        &self.config.default_runways
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {
@@ -41,7 +66,7 @@ impl Config {
             .truncate(false)
             .open(self.get_rwy_file_path())?;
 
-        let start_of_file = read_active_airportt(&mut file)?;
+        let start_of_file = read_active_airport(&mut file)?;
         file.seek(SeekFrom::Start(0))?;
         file.set_len(0)?;
         write_runway_file(&mut file, airports, &start_of_file)
@@ -49,7 +74,7 @@ impl Config {
 }
 
 #[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
-pub fn read_active_airportt<T: Read>(rwy_file: &mut T) -> io::Result<String> {
+pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
     let reader = BufReader::new(rwy_file);
 
     reader
@@ -64,8 +89,25 @@ pub fn read_active_airportt<T: Read>(rwy_file: &mut T) -> io::Result<String> {
         .collect::<io::Result<String>>()
 }
 
-fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> Result<(), Box<dyn Error>> {
+fn setup_configuration() -> Result<Configurable, ConfigError> {
+    let config_dir = ProjectDirs::from("", "meltinglava", "vatsca_es_setup")
+        .expect("Failed to get project directories")
+        .config_dir()
+        .to_path_buf();
 
+    let config_file = config_dir.join("config.toml");
+    if !config_file.exists() {
+        std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
+        std::fs::write(&config_file, include_str!("../config.toml")).expect("Failed to create config file");
+    }
+    Config::builder()
+        .add_source(config::File::from(config_file).required(true))
+        .build()
+        .expect("Failed to build configuration")
+        .try_deserialize::<Configurable>()
+}
+
+fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> Result<(), Box<dyn Error>> {
     let mut writer = BufWriter::new(rwy_file);
     writeln!(writer, "{}", start_of_file)?;
 
@@ -93,15 +135,20 @@ fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_f
 
 fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
     let bd = BaseDirs::new();
-    let mut possibilities = bd.map(|bd| {
-        vec![
-            bd.config_dir().join("Euroscope"),
-            bd.home_dir().join("Documents/Euroscope"),
+    let ud = UserDirs::new();
+    let mut possibilities =
+        [
+            bd.map(|d| d.config_dir().join("Euroscope")),
+            ud.and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
         ]
-    }).unwrap_or_default();
+        .into_iter()
+        .filter_map(|p| p)
+        .chain({
+            std::iter::once(PathBuf::from(format!("/mnt/c/Users/{}/Documents/Euroscope/Euroscope_dev", whoami::username())))
+        })
+        .collect_vec();
 
     let extra_locations = [
-        PathBuf::from(format!("/mnt/c/Users/{}/Documents/Euroscope/Euroscope_dev", whoami::username())),
     ];
     possibilities.extend(extra_locations);
     possibilities.retain(|p| p.exists() && p.is_dir());
@@ -136,11 +183,28 @@ fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
 mod tests {
     use super::*;
 
+    impl ESConfig {
+        pub fn new_for_test() -> Self {
+            let config_file = PathBuf::from("config.toml");
+            let config: Configurable = Config::builder()
+                .add_source(config::File::from(config_file).required(true))
+                .build()
+                .expect("Failed to build configuration")
+                .try_deserialize::<Configurable>()
+                .expect("Failed to deserialize configuration");
+            Self {
+                euroscope_config_folder: PathBuf::from("/test/path"),
+                enor_file_prefix: "ENOR-Test".to_string(),
+                config,
+            }
+        }
+    }
+
     #[test]
     fn test_read_active_airports() {
         let data = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0\nACTIVE_RUNWAY:ENZV:18:1\nACTIVE_RUNWAY:ENZV:18:0\n";
         let mut cursor = io::Cursor::new(data);
-        let result = read_active_airportt(&mut cursor).unwrap();
+        let result = read_active_airport(&mut cursor).unwrap();
         let expected = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0";
         assert_eq!(result, expected);
     }

@@ -3,7 +3,7 @@ use itertools::{Itertools, MinMaxResult::{MinMax, NoElements, OneElement}};
 use jiff::Zoned;
 use rust_flightweather::{metar::Metar, types::{CloudLayer, Clouds, Data, Visibility}};
 
-use crate::metar::{calculate_max_crosswind, calculate_max_headwind};
+use crate::{config::ESConfig, metar::{calculate_max_crosswind, calculate_max_headwind}};
 use crate::runway::{Runway, RunwayUse};
 
 #[derive(Debug)]
@@ -22,9 +22,9 @@ enum EngmModes {
 }
 
 impl Airport {
-    pub fn set_runway_based_on_metar_wind(&self) -> Option<IndexMap<String, RunwayUse>> {
+    pub fn set_runway_based_on_metar_wind(&self, config: &ESConfig) -> Option<IndexMap<String, RunwayUse>> {
         if self.icao == "ENGM" {
-            Some(self.set_runway_for_engm())
+            Some(self.set_runway_for_engm(config))
         } else if self.icao == "ENZV" {
             Some(self.set_runway_for_enzv())
         } else if self.runways.len() == 1 {
@@ -67,14 +67,15 @@ impl Airport {
     }
 
 
-    fn set_runway_for_engm(&self) -> IndexMap<String, RunwayUse> {
+    fn set_runway_for_engm(&self, config: &ESConfig) -> IndexMap<String, RunwayUse> {
         let runway_direction: String = match self.internal_set_runway_based_on_metar_wind(0) {
             Some(map) => {
                 map.keys().next().unwrap()[..2].to_string()
             },
             None => {
-                // TODO: Implement choise rather than default runway config
-                "01".to_string()
+                config.get_default_runways().get(&self.icao)
+                    .map(|&rwy| format!("{:02}", rwy))
+                    .unwrap_or_else(|| "01".to_string()) // Default to 01 if no default is set
             }
         };
 

@@ -6,7 +6,7 @@ use encoding::{
 
 use std::{io::Read, ops::{Index, IndexMut}};
 
-use crate::airport::Airport;
+use crate::{airport::Airport, config::ESConfig};
 use crate::atis::find_runway_in_use_from_atis;
 use crate::runway::{Runway, RunwayDirection, RunwayUse};
 use crate::metar::get_metars;
@@ -27,10 +27,9 @@ impl Airports {
         self.airports.insert(airport.icao.clone(), airport);
     }
 
-    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R) {
+    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R, config: &ESConfig) {
         let sct_file = read_with_encoings(reader).expect("Failed to read SCT file");
-        let ignored = include_str!("../ignore_airports.txt");
-        let ignored_set: IndexSet<_> = ignored.lines().collect();
+        let ignored_set = config.get_ignore_airports();
 
         for line in sct_file.lines().skip_while(|line| *line != "[RUNWAY]").skip(1).take_while(|line| !line.is_empty()) {
             let parts: Vec<_> = line.split_whitespace().collect();
@@ -103,24 +102,23 @@ impl Airports {
         Ok(())
     }
 
-    pub fn select_runways_in_use(&mut self) {
+    pub fn select_runways_in_use(&mut self, config: &ESConfig) {
         for airport in self.airports.values_mut() {
             if !airport.runways_in_use.is_empty() {
                 continue; // Already set by ATIS
             }
-            if let Some(runways_in_use) = airport.set_runway_based_on_metar_wind() {
+            if let Some(runways_in_use) = airport.set_runway_based_on_metar_wind(&config) {
                 airport.runways_in_use = runways_in_use;
             }
         }
     }
 
-    pub fn apply_default_runways(&mut self) {
-        let defaults = include_str!("../default_runways.txt");
-        let default_map: IndexMap<_, _> = defaults.lines().filter_map(|line| line.split_once(':')).collect();
+    pub fn apply_default_runways(&mut self, config: &ESConfig) {
+        let defaults = config.get_default_runways();
         for airport in self.airports.values_mut() {
             if airport.runways_in_use.is_empty() {
-                if let Some(runway) = default_map.get(airport.icao.as_str()) {
-                    airport.runways_in_use.insert(runway.to_string(), RunwayUse::Both);
+                if let Some(runway) = defaults.get(airport.icao.as_str()) {
+                    airport.runways_in_use.insert(format!("{runway:02}"), RunwayUse::Both);
                 }
             }
         }
@@ -176,8 +174,9 @@ mod tests {
     #[test]
     fn make_test_airport() {
         let mut ap = Airports::new();
-        let mut reader = std::io::Cursor::new(include_str!("../runway.txt"));
-        ap.fill_known_airports(&mut reader);
+        let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
+        let config = ESConfig::new_for_test();
+        ap.fill_known_airports(&mut reader, &config);
         assert_eq!(ap.airports.len(), 51);
     }
 

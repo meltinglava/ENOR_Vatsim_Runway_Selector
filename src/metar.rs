@@ -83,7 +83,7 @@ fn scale_speed(speed: WindSpeed, factor: f64) -> WindSpeed {
 
 #[cfg(test)]
 mod tests {
-    use crate::{airport::Airport, airports::Airports, runway::{RunwayDirection, RunwayUse}};
+    use crate::{airport::Airport, airports::Airports, config::ESConfig, runway::{RunwayDirection, RunwayUse}};
 
     use super::*;
     use indexmap::IndexMap;
@@ -91,8 +91,9 @@ mod tests {
 
     fn make_test_airport(icao: &str, metar: &str) -> Airport {
         let mut ap = Airports::new();
-        let mut reader = std::io::Cursor::new(include_str!("../runway.txt"));
-        ap.fill_known_airports(&mut reader);
+        let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
+        let config = ESConfig::new_for_test();
+        ap.fill_known_airports(&mut reader, &config);
         let mut ap = ap.airports.swap_remove(icao).unwrap();
         let metar = Metar::parse(metar).unwrap();
         ap.metar = Some(metar);
@@ -161,7 +162,7 @@ mod tests {
         let airport = make_test_airport("ENMH", metar);
         let mut airports = Airports::new();
         airports.add_airport(airport);
-        airports.select_runways_in_use();
+        airports.select_runways_in_use(&ESConfig::new_for_test());
         assert_eq!(airports["ENMH"].runways_in_use, IndexMap::from([
             ("35".to_string(), RunwayUse::Both),
         ]));
