@@ -1,8 +1,9 @@
-use std::{fs::OpenOptions, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
+use std::{fs::{self, OpenOptions}, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
 use config::{Config, ConfigError};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
+use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tracing::warn;
@@ -17,6 +18,8 @@ use crate::{airports::Airports, error::ApplicationResult, runway::RunwayUse};
 pub(crate) struct ESConfig {
     euroscope_config_folder: PathBuf,
     enor_file_prefix: String,
+    #[allow(dead_code)] // used in tests
+    config_file_path: PathBuf,
     config: Configurable,
 }
 
@@ -30,8 +33,10 @@ struct Configurable {
 
 impl ESConfig {
     pub fn find_euroscope_config_folder() -> Option<Self> {
-        let config = setup_configuration().unwrap();
-        let sct_path = search_for_euroscope_newest_sct_file().or_else(|| config.euroscope_config_folder.clone())?;
+        let (mut config, config_file_path) = setup_configuration().unwrap();
+        let sct_path = search_for_euroscope_newest_sct_file()
+            .or_else(|| config.euroscope_config_folder.clone())
+            .or_else(|| get_rfd_euroscope_config_folder(&mut config, &config_file_path))?;
         let enor_file_prefix = sct_path.file_stem()?
             .to_string_lossy()
             .to_string();
@@ -39,6 +44,7 @@ impl ESConfig {
             euroscope_config_folder: sct_path.parent()?.to_path_buf(),
             enor_file_prefix,
             config,
+            config_file_path,
         })
     }
 
@@ -73,6 +79,21 @@ impl ESConfig {
     }
 }
 
+fn get_rfd_euroscope_config_folder<P: AsRef<Path>>(config: &mut Configurable, config_file_path: &P) -> Option<PathBuf> {
+    let bd = BaseDirs::new()?;
+
+    FileDialog::new()
+        .set_title("Select Euroscope sector file folder. The folder containing the ese file")
+        .set_directory(bd.config_dir())
+        .add_filter("Euroscope Configuration", &["sct", "rwy"])
+        .pick_folder()
+        .inspect(|path: &PathBuf| {
+            config.euroscope_config_folder = Some(path.clone());
+            fs::write(config_file_path, toml::to_string_pretty(&config).unwrap()).expect("Failed to write config file");
+        })
+
+}
+
 #[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
 pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
     let reader = BufReader::new(rwy_file);
@@ -89,7 +110,7 @@ pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
         .collect::<io::Result<String>>()
 }
 
-fn setup_configuration() -> Result<Configurable, ConfigError> {
+fn setup_configuration() -> Result<(Configurable, PathBuf), ConfigError> {
     let config_dir = ProjectDirs::from("", "meltinglava", "vatsca_es_setup")
         .expect("Failed to get project directories")
         .config_dir()
@@ -100,11 +121,12 @@ fn setup_configuration() -> Result<Configurable, ConfigError> {
         std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
         std::fs::write(&config_file, include_str!("../config.toml")).expect("Failed to create config file");
     }
-    Config::builder()
-        .add_source(config::File::from(config_file).required(true))
+    let configurable = Config::builder()
+        .add_source(config::File::from(config_file.clone()).required(true))
         .build()
         .expect("Failed to build configuration")
-        .try_deserialize::<Configurable>()
+        .try_deserialize::<Configurable>()?;
+    Ok((configurable, config_file))
 }
 
 fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> ApplicationResult<()> {
@@ -187,7 +209,7 @@ mod tests {
         pub fn new_for_test() -> Self {
             let config_file = PathBuf::from("config.toml");
             let config: Configurable = Config::builder()
-                .add_source(config::File::from(config_file).required(true))
+                .add_source(config::File::from(config_file.clone()).required(true))
                 .build()
                 .expect("Failed to build configuration")
                 .try_deserialize::<Configurable>()
@@ -196,6 +218,7 @@ mod tests {
                 euroscope_config_folder: PathBuf::from("/test/path"),
                 enor_file_prefix: "ENOR-Test".to_string(),
                 config,
+                config_file_path: config_file,
             }
         }
     }
