@@ -1,4 +1,4 @@
-use std::{error::Error, fs::OpenOptions, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
+use std::{fs::OpenOptions, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
 use config::{Config, ConfigError};
 use indexmap::{IndexMap, IndexSet};
@@ -10,7 +10,7 @@ use directories::{BaseDirs, ProjectDirs, UserDirs};
 use jiff::civil::DateTime;
 use walkdir::WalkDir;
 
-use crate::{airports::Airports, runway::RunwayUse};
+use crate::{airports::Airports, error::ApplicationResult, runway::RunwayUse};
 
 
 #[derive(Debug)]
@@ -58,7 +58,7 @@ impl ESConfig {
         self.euroscope_config_folder.join(format!("{}.rwy", self.enor_file_prefix))
     }
 
-    pub fn write_runways_to_euroscope_rwy_file(&self, airports: &Airports) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write_runways_to_euroscope_rwy_file(&self, airports: &Airports) -> ApplicationResult<()> {
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -69,7 +69,7 @@ impl ESConfig {
         let start_of_file = read_active_airport(&mut file)?;
         file.seek(SeekFrom::Start(0))?;
         file.set_len(0)?;
-        write_runway_file(&mut file, airports, &start_of_file)
+        write_runway_file(&mut file, airports, &start_of_file).into()
     }
 }
 
@@ -107,7 +107,7 @@ fn setup_configuration() -> Result<Configurable, ConfigError> {
         .try_deserialize::<Configurable>()
 }
 
-fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> Result<(), Box<dyn Error>> {
+fn write_runway_file<T: Write>(rwy_file: &mut T, airports: &Airports, start_of_file: &str) -> ApplicationResult<()> {
     let mut writer = BufWriter::new(rwy_file);
     writeln!(writer, "{}", start_of_file)?;
 

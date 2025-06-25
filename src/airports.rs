@@ -6,7 +6,7 @@ use encoding::{
 
 use std::{io::Read, ops::{Index, IndexMut}};
 
-use crate::{airport::Airport, config::ESConfig};
+use crate::{airport::Airport, config::ESConfig, error::ApplicationResult};
 use crate::atis::find_runway_in_use_from_atis;
 use crate::runway::{Runway, RunwayDirection, RunwayUse};
 use crate::metar::get_metars;
@@ -27,7 +27,7 @@ impl Airports {
         self.airports.insert(airport.icao.clone(), airport);
     }
 
-    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R, config: &ESConfig) {
+    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R, config: &ESConfig) -> ApplicationResult<()> {
         let sct_file = read_with_encoings(reader).expect("Failed to read SCT file");
         let ignored_set = config.get_ignore_airports();
 
@@ -47,12 +47,13 @@ impl Airports {
 
             let runway = Runway {
                 runways: [
-                    RunwayDirection { degrees: parts[2].parse().unwrap(), identifier: parts[0].into() },
-                    RunwayDirection { degrees: parts[3].parse().unwrap(), identifier: parts[1].into() },
+                    RunwayDirection { degrees: parts[2].parse()?, identifier: parts[0].into() },
+                    RunwayDirection { degrees: parts[3].parse()?, identifier: parts[1].into() },
                 ],
             };
             airport.runways.push(runway);
         }
+        Ok(())
     }
 
     pub async fn add_metars(&mut self) {
@@ -64,7 +65,7 @@ impl Airports {
         }
     }
 
-    pub async fn read_atises(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn read_atises(&mut self) -> ApplicationResult<()> {
         let icaos = self.identifiers();
         let data = reqwest::get("https://data.vatsim.net/v3/vatsim-data.json")
             .await?
@@ -107,7 +108,7 @@ impl Airports {
             if !airport.runways_in_use.is_empty() {
                 continue; // Already set by ATIS
             }
-            if let Some(runways_in_use) = airport.set_runway_based_on_metar_wind(&config) {
+            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(&config) {
                 airport.runways_in_use = runways_in_use;
             }
         }
@@ -151,19 +152,18 @@ impl IndexMut<&str> for Airports {
     }
 }
 
-fn read_with_encoings<R: Read>(reader: &mut R) -> Result<String, Box<dyn std::error::Error>> {
+fn read_with_encoings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;
 
-    if let Ok(text) = UTF_8.decode(&buffer, DecoderTrap::Strict) {
-        return Ok(text);
-    }
+    let utf8_decoded = UTF_8.decode(&buffer, DecoderTrap::Strict);
 
-    if let Ok(text) = ISO_8859_1.decode(&buffer, DecoderTrap::Strict) {
-        return Ok(text);
+    match utf8_decoded {
+        Ok(text) => Ok(text),
+        Err(e) => ISO_8859_1
+            .decode(&buffer, DecoderTrap::Strict)
+            .map_err(|_| crate::error::ApplicationError::EncodingError(e.to_string())),
     }
-
-    Err("Failed to decode the input".into())
 }
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ mod tests {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
         let config = ESConfig::new_for_test();
-        ap.fill_known_airports(&mut reader, &config);
+        ap.fill_known_airports(&mut reader, &config).unwrap();
         assert_eq!(ap.airports.len(), 51);
     }
 

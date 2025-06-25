@@ -21,6 +21,7 @@ rust_flightweather = { path = "/home/ros/projects/rust/others/r-fw/"}
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140", features = ["indexmap", "preserve_order"] }
 serde_with = { version = "3.13.0", features = ["indexmap"] }
+thiserror = "2.0.12"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.41"
 walkdir = "2.5.0"

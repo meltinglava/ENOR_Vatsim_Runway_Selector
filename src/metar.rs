@@ -3,9 +3,9 @@ use rust_flightweather::{
     types::{Data, Wind, WindDirection, WindSpeed},
 };
 
-use crate::util::diff_angle;
+use crate::{error::ApplicationResult, util::diff_angle};
 
-pub async fn get_metars() -> Result<Vec<Metar>, Box<dyn std::error::Error>> {
+pub async fn get_metars() -> ApplicationResult<Vec<Metar>> {
     let ignore = ["ENSF"];
     let values = reqwest::get("https://metar.vatsim.net/EN")
         .await?
@@ -93,7 +93,7 @@ mod tests {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
         let config = ESConfig::new_for_test();
-        ap.fill_known_airports(&mut reader, &config);
+        ap.fill_known_airports(&mut reader, &config).unwrap();
         let mut ap = ap.airports.swap_remove(icao).unwrap();
         let metar = Metar::parse(metar).unwrap();
         ap.metar = Some(metar);

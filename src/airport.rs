@@ -3,7 +3,7 @@ use itertools::{Itertools, MinMaxResult::{MinMax, NoElements, OneElement}};
 use jiff::Zoned;
 use rust_flightweather::{metar::Metar, types::{CloudLayer, Clouds, Data, Visibility}};
 
-use crate::{config::ESConfig, metar::{calculate_max_crosswind, calculate_max_headwind}};
+use crate::{config::ESConfig, error::{ApplicationError, ApplicationResult}, metar::{calculate_max_crosswind, calculate_max_headwind}};
 use crate::runway::{Runway, RunwayUse};
 
 #[derive(Debug)]
@@ -22,13 +22,13 @@ enum EngmModes {
 }
 
 impl Airport {
-    pub fn set_runway_based_on_metar_wind(&self, config: &ESConfig) -> Option<IndexMap<String, RunwayUse>> {
+    pub fn set_runway_based_on_metar_wind(&self, config: &ESConfig) -> ApplicationResult<IndexMap<String, RunwayUse>> {
         if self.icao == "ENGM" {
-            Some(self.set_runway_for_engm(config))
+            self.set_runway_for_engm(config)
         } else if self.icao == "ENZV" {
-            Some(self.set_runway_for_enzv())
+            self.set_runway_for_enzv()
         } else if self.runways.len() == 1 {
-            self.internal_set_runway_based_on_metar_wind(0)
+            self.internal_set_runway_based_on_metar_wind(0).ok_or(ApplicationError::NoRunwayToSet)
         } else {
             unreachable!("Airport {} has multiple runways, but no specific logic implemented for it", self.icao);
         }
@@ -67,7 +67,7 @@ impl Airport {
     }
 
 
-    fn set_runway_for_engm(&self, config: &ESConfig) -> IndexMap<String, RunwayUse> {
+    fn set_runway_for_engm(&self, config: &ESConfig) -> ApplicationResult<IndexMap<String, RunwayUse>> {
         let runway_direction: String = match self.internal_set_runway_based_on_metar_wind(0) {
             Some(map) => {
                 map.keys().next().unwrap()[..2].to_string()
@@ -118,9 +118,9 @@ impl Airport {
         let reported_vv = self.metar.as_ref().and_then(|m| m.vert_visibility.clone()).is_some();
 
         let now = Zoned::now().in_tz("Europe/Oslo").expect("Failed to get timezone Europe/Oslo");
-        let mode = if now.date().at(22, 30, 0, 0).in_tz("Europe/Oslo").unwrap() <= now {
+        let mode = if now.date().at(22, 30, 0, 0).in_tz("Europe/Oslo")? <= now {
             EngmModes::Segregated
-        } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo").unwrap() > now {
+        } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo")? > now {
             EngmModes::Single // could be mixed if weather is bad, but currently out of scope
         } else {
             if ceiling_for_lvp || rvr_reported || visibility_below_5000 || reported_vv {
@@ -149,10 +149,10 @@ impl Airport {
                 map.insert(runway, RunwayUse::Both);
             },
         }
-        map
+        Ok(map)
     }
 
-    fn set_runway_for_enzv(&self) -> IndexMap<String, RunwayUse> {
+    fn set_runway_for_enzv(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
         let main_runway_index = self.runways.iter().enumerate().filter(|(_, runway)| {
             runway.runways.iter().any(|dir| {
                 dir.identifier == "18"
@@ -163,9 +163,9 @@ impl Airport {
             None => "18".to_string(),
         };
 
-        let default_fallback = IndexMap::from([
+        let default_fallback = Ok(IndexMap::from([
             (main_runway.clone(), RunwayUse::Both),
-        ]);
+        ]));
 
         let main_runway_direction = self.runways[main_runway_index].runways.iter().find(|dir| dir.identifier == main_runway).unwrap();
 
@@ -189,7 +189,7 @@ impl Airport {
                     // If the secondary runway has a lower crosswind, we use it
                     let mut map = IndexMap::new();
                     map.insert(secondary_runway, RunwayUse::Both);
-                    return map;
+                    return Ok(map);
                 } else {
                     return default_fallback;
                 }
