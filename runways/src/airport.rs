@@ -3,7 +3,7 @@ use std::convert::identity;
 use indexmap::IndexMap;
 use itertools::{Itertools, MinMaxResult::{MinMax, NoElements, OneElement}};
 use jiff::Zoned;
-use metar_decoder::{metar::Metar, obscuration::{CloudCoverage, Obscuration, Visibility}, optional_data::OptionalData};
+use metar_decoder::{metar::Metar, obscuration::{Cloud, CloudCoverage, Obscuration, Visibility, VisibilityUnit}, optional_data::OptionalData};
 
 use crate::{config::ESConfig, error::{ApplicationError, ApplicationResult}, metar::{calculate_max_crosswind, calculate_max_headwind}};
 use crate::runway::{Runway, RunwayUse};
@@ -43,7 +43,7 @@ impl Airport {
             (dir.identifier.clone(), headwind)
         }).collect::<IndexMap<_, _>>();
 
-        let valid_headwind_values = headwinds.values().filter_map(|v| v.as_ref().map(|w| w.as_knots())).collect::<Vec<_>>();
+        let valid_headwind_values = headwinds.values().filter_map(|v| v.as_ref()).collect::<Vec<_>>();
         if valid_headwind_values.is_empty() {
             return None;
         }
@@ -54,9 +54,9 @@ impl Airport {
             OneElement(value) => (value, value),
         };
 
-        if (max - min) > 2.0 {
+        if (max - min) > 2 {
             let selected = headwinds.iter().find(|(_, v)| {
-                v.as_ref().map(|w| (w.as_knots() - max).abs() < f64::EPSILON).unwrap_or(false)
+                v.as_ref().map(|w| w == max).unwrap_or(false)
             });
             if let Some((ident, _)) = selected {
                 let mut map = IndexMap::new();
@@ -86,45 +86,51 @@ impl Airport {
         let mut visibility_below_5000 = false;
         let mut reported_vv = false;
 
-        if let Obscuration::Described(described_obscuration) = &self.metar.obscuration {
-            let CEILING_CLOUDS = [CloudCoverage::Broken, CloudCoverage::Overcast];
-            ceiling_for_lvp = described_obscuration
-                .clouds
-                .iter()
-                .filter(|cloud| {
-                    if let OptionalData::Data(coverage) = &cloud.coverage {
-                        CEILING_CLOUDS.contains(&coverage)
+        if let Some(metar) = &self.metar {
+            if let Obscuration::Described(described_obscuration) = &metar.obscuration {
+                let CEILING_CLOUDS = [CloudCoverage::Broken, CloudCoverage::Overcast];
+                ceiling_for_lvp = described_obscuration
+                    .clouds
+                    .iter()
+                    .filter_map(|cloud| match cloud {
+                        Cloud::CloudData(cloud_data) => Some(cloud_data),
+                        Cloud::NCD | Cloud::NSC => None,
+                    })
+                    .filter(|cloud| {
+                        if let OptionalData::Data(coverage) = &cloud.coverage {
+                            CEILING_CLOUDS.contains(&coverage)
+                        } else {
+                            true // If coverage is undefined, we assume its broken or overcast
+                        }
+                    })
+                    .any(|cloud| {
+                        if let OptionalData::Data(height) = &cloud.height {
+                            height.height < 500 // Ceiling below 500 feet
+                        } else {
+                            true // If height is undefined, we assume its below 500 feet
+                        }
+                    });
+
+                rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
+                    if let OptionalData::Data(value) = rvr.value {
+                        value < 1000
                     } else {
-                        true // If coverage is undefined, we assume its broken or overcast
-                    }
-                })
-                .any(|cloud| {
-                    if let OptionalData::Data(height) = &cloud.height {
-                        height.height < 500 // Ceiling below 500 feet
-                    } else {
-                        true // If height is undefined, we assume its below 500 feet
+                        true
                     }
                 });
 
-            let rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
-               if let OptionalData::Data(value) = rvr.value {
-                    value < 1000
-                } else {
-                    true
-                }
-            });
 
-
-            if let Visibility::Meters(data) = described_obscuration.visibility {
-                visibility_below_5000 = if let OptionalData::Data(value) = data {
-                    value < 5000
-                } else {
-                    true
+                if let VisibilityUnit::Meters(data) = described_obscuration.visibility.value {
+                    visibility_below_5000 = if let OptionalData::Data(value) = data {
+                        value < 5000
+                    } else {
+                        true
+                    }
                 }
+                // TODO: Handle statute miles visibility
+
+                let reported_vv = false; // TODO: Handle vertical visibility
             }
-            // TODO: Handle statute miles visibility
-
-            let reported_vv = false; // TODO: Handle vertical visibility
         }
 
         let now = Zoned::now().in_tz("Europe/Oslo").expect("Failed to get timezone Europe/Oslo");
@@ -185,7 +191,7 @@ impl Airport {
                 return default_fallback;
             }
             if let Some(crosswind) = crosswind_main_runway {
-                if crosswind.as_knots() < 15.0 {
+                if crosswind < 15 {
                     // If crosswind is below 15 knots, we can use the main runway
                     return default_fallback;
                 }

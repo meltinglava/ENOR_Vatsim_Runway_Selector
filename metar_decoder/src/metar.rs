@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read};
+use std::{io::{BufRead, BufReader, Read}, str::FromStr};
 
 use itertools::Itertools;
 use nom::{
@@ -22,6 +22,19 @@ pub struct Metar {
     pub nosig: bool,
     pub sea_surface_indicator: Option<SeaSurfaceIndicator>,
     pub remarks: Option<String>,
+}
+
+impl FromStr for Metar {
+    type Err = nom::error::Error<String>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (rest, metar) = nom_parse_metar(s).finish()?;
+        if !rest.is_empty() {
+            Err(nom::error::Error::new(rest.to_string(), nom::error::ErrorKind::NonEmpty))
+        } else {
+            Ok(metar)
+        }
+    }
 }
 
 pub fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
