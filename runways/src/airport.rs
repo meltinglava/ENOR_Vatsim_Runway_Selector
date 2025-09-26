@@ -1,7 +1,9 @@
+use std::convert::identity;
+
 use indexmap::IndexMap;
 use itertools::{Itertools, MinMaxResult::{MinMax, NoElements, OneElement}};
 use jiff::Zoned;
-use rust_flightweather::{metar::Metar, types::{CloudLayer, Clouds, Data, Visibility}};
+use metar_decoder::{metar::Metar, obscuration::{CloudCoverage, Obscuration, Visibility}, optional_data::OptionalData};
 
 use crate::{config::ESConfig, error::{ApplicationError, ApplicationResult}, metar::{calculate_max_crosswind, calculate_max_headwind}};
 use crate::runway::{Runway, RunwayUse};
@@ -79,49 +81,57 @@ impl Airport {
             }
         };
 
-        let ceiling_for_lvp = if let Some(metar) = self.metar.as_ref() {
-            match metar.clouds {
-                Data::Known(Clouds::CloudLayers) => {
-                    metar.cloud_layers.iter().filter(|layer| {
-                        match layer {
-                            CloudLayer::Broken(_, ceil) => ceil.map(|c| c < 500).unwrap_or(false),
-                            CloudLayer::Overcast(_, ceil) => ceil.map(|c| c < 500).unwrap_or(false),
-                            _ => false
-                        }
-                    }).next().is_some()
+        let mut ceiling_for_lvp = false;
+        let mut rvr_reported = false;
+        let mut visibility_below_5000 = false;
+        let mut reported_vv = false;
+
+        if let Obscuration::Described(described_obscuration) = &self.metar.obscuration {
+            let CEILING_CLOUDS = [CloudCoverage::Broken, CloudCoverage::Overcast];
+            ceiling_for_lvp = described_obscuration
+                .clouds
+                .iter()
+                .filter(|cloud| {
+                    if let OptionalData::Data(coverage) = &cloud.coverage {
+                        CEILING_CLOUDS.contains(&coverage)
+                    } else {
+                        true // If coverage is undefined, we assume its broken or overcast
+                    }
+                })
+                .any(|cloud| {
+                    if let OptionalData::Data(height) = &cloud.height {
+                        height.height < 500 // Ceiling below 500 feet
+                    } else {
+                        true // If height is undefined, we assume its below 500 feet
+                    }
+                });
+
+            let rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
+               if let OptionalData::Data(value) = rvr.value {
+                    value < 1000
+                } else {
+                    true
                 }
-                _ => false,
+            });
+
+
+            if let Visibility::Meters(data) = described_obscuration.visibility {
+                visibility_below_5000 = if let OptionalData::Data(value) = data {
+                    value < 5000
+                } else {
+                    true
+                }
             }
-        } else {
-            false
-        };
+            // TODO: Handle statute miles visibility
 
-        let rvr_reported = if let Some(metar) = self.metar.as_ref() {
-            !metar.rvr.is_empty() // RVR is a vec. We dont carre about the values, just if it exists
-        } else {
-            false
-        };
-
-        let visibility_below_5000 = if let Some(metar) = self.metar.as_ref() {
-            match &metar.visibility {
-                Data::Known(v) => match v {
-                    Visibility::Metres(m) => *m < 5000,
-                    Visibility::StatuteMiles(_) => unreachable!("No norwegian airports should report vis in statue miles"), // We don't handle statute miles here
-                    Visibility::Cavok => false,
-                },
-                Data::Unknown => false,
-            }
-        } else {
-            false
-        };
-
-        let reported_vv = self.metar.as_ref().and_then(|m| m.vert_visibility.clone()).is_some();
+            let reported_vv = false; // TODO: Handle vertical visibility
+        }
 
         let now = Zoned::now().in_tz("Europe/Oslo").expect("Failed to get timezone Europe/Oslo");
         let mode = if now.date().at(22, 30, 0, 0).in_tz("Europe/Oslo")? <= now {
             EngmModes::Segregated
         } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo")? > now {
-            EngmModes::Single // could be mixed if weather is bad, but currently out of scope
+            EngmModes::Single // could be segregated / mixed if weather is bad, but currently out of scope
         } else {
             if ceiling_for_lvp || rvr_reported || visibility_below_5000 || reported_vv {
                 EngmModes::Segregated

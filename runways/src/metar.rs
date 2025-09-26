@@ -1,7 +1,5 @@
-use rust_flightweather::{
-    metar::Metar,
-    types::{Data, Wind, WindDirection, WindSpeed},
-};
+use metar_decoder::{metar::{nom_parse_metar, Metar}, optional_data::OptionalData, units::{track::Track, velocity::WindVelocity}, wind::Wind};
+use nom::{Finish, IResult};
 
 use crate::{error::ApplicationResult, util::diff_angle};
 
@@ -16,18 +14,24 @@ pub async fn get_metars() -> ApplicationResult<Vec<Metar>> {
             let icao = line.split_whitespace().next().unwrap();
             !ignore.contains(&icao)
         })
-        .map(Metar::parse)
+        .map(nom_parse_metar)
+        .map(IResult::finish)
+        .map(|result| {
+            result.map_err(|e| e.cloned())
+        })
+        .map(|result| {
+            result.map(|(_, metar)| metar)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(values)
 }
 
-pub fn calculate_max_crosswind(runway: &crate::runway::RunwayDirection, wind: &Wind) -> Option<WindSpeed> {
-    let track = runway.degrees;
-    let strength = wind.gusting.clone().or(wind.speed.as_option().cloned())?;
+pub fn calculate_max_crosswind(runway: &crate::runway::RunwayDirection, wind: &Wind) -> Option<u32> {
+    let track: u32 = runway.degrees as u32;
 
-    let factor = if let Some((Data::Known(start), Data::Known(end))) = wind.varying {
+    let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) = wind.varying {
         let cross = [(track + 90) % 360, (track + 270) % 360];
-        let (start, end) = (start % 360, end % 360);
+        let (start, end): (u32, u32) = (start % 360, end % 360);
 
         let includes = |a| if start <= end { a >= start && a <= end } else { a >= start || a <= end };
 
@@ -38,20 +42,26 @@ pub fn calculate_max_crosswind(runway: &crate::runway::RunwayDirection, wind: &W
             let e: f64 = diff_angle(track, end).into();
             s.to_radians().sin().abs().max(e.to_radians().sin().abs())
         }
-    } else if let Data::Known(WindDirection::Heading(dir)) = wind.dir {
-        (f64::from(diff_angle(track, dir)).to_radians()).sin().abs()
     } else {
-        1.0
+        match &wind.dir {
+            metar_decoder::wind::WindDirection::Heading(wind_dir) => {
+                wind_dir
+                    .0
+                    .to_option()
+                    .map(|wind_dir| (diff_angle(track, wind_dir) as f64).to_radians().sin().abs())
+                    .unwrap_or(1.0)
+            },
+            metar_decoder::wind::WindDirection::Variable => 1.0,
+        }
     };
 
-    Some(scale_speed(strength, factor))
+    scale_speed(wind.speed, factor)
 }
 
-pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<WindSpeed> {
-    let track = runway.degrees;
-    let strength = wind.gusting.or(wind.speed.as_option().cloned())?;
+pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<u32> {
+    let track = runway.degrees as u32;
 
-    let factor = if let Some((Data::Known(start), Data::Known(end))) = wind.varying {
+    let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) = wind.varying {
         let heads = [track % 360, (track + 180) % 360];
         let (start, end) = (start % 360, end % 360);
         let includes = |a| if start <= end { a >= start && a <= end } else { a >= start || a <= end };
@@ -63,22 +73,24 @@ pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Win
             let e = f64::from(diff_angle(track, end));
             s.to_radians().cos().max(e.to_radians().cos()).max(0.0)
         }
-    } else if let Data::Known(WindDirection::Heading(dir)) = wind.dir {
-        f64::from(diff_angle(track, dir)).to_radians().cos().max(0.0)
     } else {
-        1.0
+        match &wind.dir {
+            metar_decoder::wind::WindDirection::Heading(wind_dir) => {
+                wind_dir
+                    .0
+                    .to_option()
+                    .map(|wind_dir| (diff_angle(track, wind_dir) as f64).to_radians().cos().abs())
+                    .unwrap_or(1.0)
+            },
+            metar_decoder::wind::WindDirection::Variable => 1.0,
+        }
     };
 
-    Some(scale_speed(strength, factor))
+    scale_speed(wind.speed, factor)
 }
 
-fn scale_speed(speed: WindSpeed, factor: f64) -> WindSpeed {
-    match speed {
-        WindSpeed::Calm => WindSpeed::Calm,
-        WindSpeed::Knot(k) => WindSpeed::Knot((k as f64 * factor).round() as u16),
-        WindSpeed::MetresPerSecond(m) => WindSpeed::MetresPerSecond((m as f64 * factor).round() as u16),
-        WindSpeed::KilometresPerHour(kph) => WindSpeed::KilometresPerHour((kph as f64 * factor).round() as u16),
-    }
+fn scale_speed(speed: WindVelocity, factor: f64) -> Option<u32> {
+    speed.get_max_wind_speed().map(|s| (f64::from(s) * factor).ceil() as u32)
 }
 
 #[cfg(test)]
@@ -87,7 +99,7 @@ mod tests {
 
     use super::*;
     use indexmap::IndexMap;
-    use rust_flightweather::types::{Data, WindDirection, WindSpeed};
+    use metar_decoder::{units::velocity::VelocityUnit, wind::WindDirection};
 
     fn make_test_airport(icao: &str, metar: &str) -> Airport {
         let mut ap = Airports::new();
@@ -103,9 +115,8 @@ mod tests {
     #[test]
     fn test_calculate_max_crosswind() {
         let wind = Wind {
-            dir: Data::Known(WindDirection::Heading(270)),
-            speed: Data::Known(WindSpeed::Knot(10)),
-            gusting: None,
+            dir: WindDirection::Heading(Track(OptionalData::Data(360))),
+            speed: WindVelocity { velocity: OptionalData::Data(10), gust: None, unit: VelocityUnit::Knots },
             varying: None,
         };
         let runway = RunwayDirection { degrees: 360, identifier: "36".into() };
@@ -119,9 +130,8 @@ mod tests {
     #[test]
     fn test_calculate_max_headwind() {
         let wind = Wind {
-            dir: Data::Known(WindDirection::Heading(360)),
-            speed: Data::Known(WindSpeed::Knot(10)),
-            gusting: None,
+            dir: WindDirection::Heading(Track(OptionalData::Data(360))),
+            speed: WindVelocity { velocity: OptionalData::Data(10), gust: None, unit: VelocityUnit::Knots },
             varying: None,
         };
         let runway = RunwayDirection { degrees: 360, identifier: "36".into() };
@@ -135,10 +145,9 @@ mod tests {
     #[test]
     fn test_calculate_max_headwind_with_varying_direction_should_not_return_full_strength() {
         let wind = Wind {
-            dir: Data::Known(WindDirection::Heading(300)),
-            speed: Data::Known(WindSpeed::Knot(9)),
-            gusting: None,
-            varying: Some((Data::Known(250), Data::Known(330))),
+            dir: WindDirection::Heading(Track(OptionalData::Data(300))),
+            speed: WindVelocity { velocity: OptionalData::Data(90), gust: None, unit: VelocityUnit::Knots },
+            varying: Some((Track(OptionalData::Data(250)), Track(OptionalData::Data(330)))),
         };
 
         let runway = RunwayDirection {
@@ -168,21 +177,19 @@ mod tests {
         ]));
     }
 
-    fn wind_kts_dir_knots(dir: u16, knots: u16) -> Wind {
+    fn wind_kts_dir_knots(dir: u32, knots: u32) -> Wind {
         Wind {
-            dir: Data::Known(WindDirection::Heading(dir)),
-            speed: Data::Known(WindSpeed::Knot(knots)),
-            gusting: None,
+            dir: WindDirection::Heading(Track(OptionalData::Data(dir))),
+            speed: WindVelocity { velocity: OptionalData::Data(knots), gust: None, unit: VelocityUnit::Knots },
             varying: None,
         }
     }
 
-    fn wind_kts_varying_knots(start: u16, end: u16, knots: u16) -> Wind {
+    fn wind_kts_varying_knots(start: u32, end: u32, knots: u32) -> Wind {
         Wind {
-            dir: Data::Known(WindDirection::Heading((start + end) / 2)),
-            speed: Data::Known(WindSpeed::Knot(knots)),
-            gusting: None,
-            varying: Some((Data::Known(start), Data::Known(end))),
+            dir: WindDirection::Heading(Track(OptionalData::Data((start + end) / 2))),
+            speed: WindVelocity { velocity: OptionalData::Data(knots), gust: None, unit: VelocityUnit::Knots },
+            varying: Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))),
         }
     }
 

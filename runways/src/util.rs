@@ -1,19 +1,19 @@
-pub fn diff_angle(a: u16, b: u16) -> u16 {
-    let diff = (a as i16 - b as i16).abs();
+pub fn diff_angle(a: u32, b: u32) -> u32 {
+    let diff = (a as i32 - b as i32).abs();
     if diff > 180 {
-        360 - diff as u16
+        360 - diff as u32
     } else {
-        diff as u16
+        diff as u32
     }
 }
 
 #[allow(dead_code)]
-pub fn diff_rotation(a: u16, b: u16) -> u16 {
-    let diff = a as i16 - b as i16;
+pub fn diff_rotation(a: u32, b: u32) -> u32 {
+    let diff = a as i32 - b as i32;
     if diff < 0 {
-        (diff + 360) as u16
+        (diff + 360) as u32
     } else {
-        diff as u16
+        diff as u32
     }
 }
 

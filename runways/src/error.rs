@@ -1,9 +1,7 @@
 use std::{io, num::ParseIntError};
 
 use config::ConfigError;
-use rust_flightweather::metar;
 use thiserror::Error;
-
 pub(crate) type ApplicationResult<T> = Result<T, ApplicationError>;
 
 #[derive(Debug, Error)]
@@ -17,7 +15,7 @@ pub(crate) enum ApplicationError {
     #[error("Error with reqwest: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("Failed to parse METAR: {0}")]
-    MetarParseError(#[from] metar::MetarError),
+    MetarParseError(#[from] nom::error::Error<String>),
     #[error("Failed to parse file in a known encoding: {0}")]
     EncodingError(String),
     #[error("Time error: {0}")]

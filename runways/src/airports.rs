@@ -59,7 +59,7 @@ impl Airports {
     pub async fn add_metars(&mut self) {
         let metars = get_metars().await.unwrap();
         for metar in metars {
-            if let Some(airport) = self.airports.get_mut(&metar.station) {
+            if let Some(airport) = self.airports.get_mut(&metar.icao) {
                 airport.metar = Some(metar);
             }
         }
