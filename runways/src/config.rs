@@ -35,15 +35,21 @@ struct Configurable {
     euroscope_config_folder: Option<PathBuf>,
 }
 
+impl Configurable {
+    fn find_from_config(&self) -> Option<(PathBuf, String)> {
+        let path = self.euroscope_config_folder.as_ref()?;
+        search_for_ese_with_possibilities(&[path])
+    }
+}
+
 impl ESConfig {
     pub fn find_euroscope_config_folder() -> Option<Self> {
         let (mut config, config_file_path) = setup_configuration().unwrap();
-        let sct_path = search_for_euroscope_newest_sct_file()
-            .or_else(|| config.euroscope_config_folder.clone())
+        let (sct_path, enor_file_prefix) = search_for_euroscope_newest_sct_file()
+            .or_else(|| config.find_from_config())
             .or_else(|| get_rfd_euroscope_config_folder(&mut config, &config_file_path))?;
-        let enor_file_prefix = sct_path.file_stem()?.to_string_lossy().to_string();
         Some(Self {
-            euroscope_config_folder: sct_path.parent()?.to_path_buf(),
+            euroscope_config_folder: sct_path,
             enor_file_prefix,
             config,
             config_file_path,
@@ -89,10 +95,10 @@ impl ESConfig {
 fn get_rfd_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
-) -> Option<PathBuf> {
+) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new()?;
 
-    FileDialog::new()
+    let possibility = FileDialog::new()
         .set_title("Select Euroscope sector file folder. The folder containing the ese file")
         .set_directory(bd.config_dir())
         .add_filter("Euroscope Configuration", &["sct", "rwy"])
@@ -101,7 +107,8 @@ fn get_rfd_euroscope_config_folder<P: AsRef<Path>>(
             config.euroscope_config_folder = Some(path.clone());
             fs::write(config_file_path, toml::to_string_pretty(&config).unwrap())
                 .expect("Failed to write config file");
-        })
+        })?;
+    search_for_ese_with_possibilities(&[possibility])
 }
 
 #[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
@@ -168,7 +175,7 @@ fn write_runway_file<T: Write>(
     Ok(())
 }
 
-fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
+fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new();
     let ud = UserDirs::new();
     let mut possibilities = [
@@ -187,6 +194,10 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
 
     possibilities.retain(|p| p.exists() && p.is_dir());
 
+    search_for_ese_with_possibilities(&possibilities)
+}
+
+fn search_for_ese_with_possibilities<P: AsRef<Path>>(possibilities: &[P]) -> Option<(PathBuf, String)> {
     let sct_files = possibilities
         .iter()
         .flat_map(|p| {
@@ -204,7 +215,8 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
                 .map(|e| e.path().to_path_buf())
         })
         .collect::<Vec<_>>();
-    sct_files.iter().max_by_key(get_es_file_name_time).cloned()
+    let file = sct_files.iter().max_by_key(get_es_file_name_time)?;
+    Some((file.parent()?.to_owned(), Path::new(file.file_name()?).file_stem()?.to_string_lossy().to_string()))
 }
 
 fn get_es_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
