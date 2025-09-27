@@ -149,7 +149,7 @@ impl Airports {
             if !airport.runways_in_use.is_empty() {
                 continue; // Already set by ATIS
             }
-            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(&config) {
+            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(config) {
                 airport.runways_in_use = runways_in_use;
             }
         }
@@ -158,12 +158,12 @@ impl Airports {
     pub fn apply_default_runways(&mut self, config: &ESConfig) {
         let defaults = config.get_default_runways();
         for airport in self.airports.values_mut() {
-            if airport.runways_in_use.is_empty() {
-                if let Some(runway) = defaults.get(airport.icao.as_str()) {
-                    airport
-                        .runways_in_use
-                        .insert(format!("{runway:02}"), RunwayUse::Both);
-                }
+            if airport.runways_in_use.is_empty()
+                && let Some(runway) = defaults.get(airport.icao.as_str())
+            {
+                airport
+                    .runways_in_use
+                    .insert(format!("{runway:02}"), RunwayUse::Both);
             }
         }
     }

@@ -81,7 +81,7 @@ impl ESConfig {
         let start_of_file = read_active_airport(&mut file)?;
         file.seek(SeekFrom::Start(0))?;
         file.set_len(0)?;
-        write_runway_file(&mut file, airports, &start_of_file).into()
+        write_runway_file(&mut file, airports, &start_of_file)
     }
 }
 
@@ -175,7 +175,7 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
         ud.and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
     ]
     .into_iter()
-    .filter_map(|p| p)
+    .flatten()
     .chain({
         std::iter::once(PathBuf::from(format!(
             "/mnt/c/Users/{}/Documents/Euroscope/Euroscope_dev",

@@ -1,12 +1,8 @@
 use std::fmt::Display;
 
 use nom::{
-    AsChar, Input, Parser,
-    branch::{Choice, alt},
-    character::complete::char,
-    combinator::{map, value},
-    error::ParseError,
-    multi::count,
+    AsChar, Input, Parser, branch::alt, character::complete::char, combinator::map,
+    error::ParseError, multi::count,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,21 +23,16 @@ impl<T, const N: usize> OptionalData<T, N> {
     }
 }
 
-impl<T: Clone, const N: usize> OptionalData<T, N> {
-    // Ugly type signature. Should be able to return impl Parser....
-    pub fn optional_field<P, I, E: ParseError<I>>(
-        p: P,
-    ) -> Choice<(
-        impl Parser<I, Output = OptionalData<T, N>, Error = E>,
-        impl Parser<I, Output = OptionalData<T, N>, Error = E>,
-    )>
+impl<T, const N: usize> OptionalData<T, N> {
+    pub fn optional_field<P, I, E>(p: P) -> impl Parser<I, Output = OptionalData<T, N>, Error = E>
     where
         P: Parser<I, Output = T, Error = E>,
         I: Input,
-        <I as Input>::Item: AsChar,
+        I::Item: AsChar,
+        E: ParseError<I>,
     {
         alt((
-            value(OptionalData::Undefined, count(char('/'), N)),
+            map(count(char('/'), N), |_| OptionalData::Undefined),
             map(p, OptionalData::Data),
         ))
     }

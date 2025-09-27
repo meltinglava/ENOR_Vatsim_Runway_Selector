@@ -178,16 +178,15 @@ pub fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
 #[allow(unused)]
 fn parse_metars<R: Read>(input: R) -> Result<Vec<(String, Metar)>, nom::error::Error<String>> {
     let reader = BufReader::new(input);
-    let results = reader
+    reader
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .map(|s| s.trim().to_owned())
         .map(|m| -> Result<(String, Metar), nom::error::Error<String>> {
             let (rest, metar) = nom_parse_metar(&m).finish()?;
             Ok((rest.to_string(), metar))
         })
-        .try_collect();
-    results
+        .try_collect()
 }
 
 #[cfg(test)]

@@ -26,7 +26,7 @@ pub(crate) fn nom_track(input: &str) -> IResult<&str, Track> {
         take(3usize),
         all_consuming(verify(u32, |n: &u32| (0..=360).contains(n))),
     ))
-    .map(|track| Track(track))
+    .map(Track)
     .parse(input)
 }
 

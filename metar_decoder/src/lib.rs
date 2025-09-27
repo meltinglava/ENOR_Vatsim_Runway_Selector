@@ -1,9 +1,9 @@
-pub mod trend;
 pub mod metar;
 pub mod obscuration;
 pub mod optional_data;
 pub mod pressure;
 pub mod sea_surface_indicator;
 pub mod temprature;
+pub mod trend;
 pub mod units;
 pub mod wind;

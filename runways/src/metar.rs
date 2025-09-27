@@ -126,12 +126,7 @@ fn scale_speed(speed: WindVelocity, factor: f64) -> Option<u32> {
 mod tests {
     use std::str::FromStr;
 
-    use crate::{
-        airport::Airport,
-        airports::Airports,
-        config::ESConfig,
-        runway::{RunwayDirection, RunwayUse},
-    };
+    use crate::{airport::Airport, airports::Airports, config::ESConfig, runway::RunwayUse};
 
     use super::*;
     use indexmap::IndexMap;
@@ -214,6 +209,7 @@ mod tests {
         );
     }
 
+    #[allow(unused)]
     fn wind_kts_dir_knots(dir: u32, knots: u32) -> Wind {
         Wind {
             dir: WindDirection::Heading(Track(OptionalData::Data(dir))),
@@ -226,6 +222,7 @@ mod tests {
         }
     }
 
+    #[allow(unused)]
     fn wind_kts_varying_knots(start: u32, end: u32, knots: u32) -> Wind {
         Wind {
             dir: WindDirection::Heading(Track(OptionalData::Data((start + end) / 2))),

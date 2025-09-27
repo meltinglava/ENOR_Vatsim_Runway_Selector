@@ -63,7 +63,7 @@ fn nom_metar_timestamp_with_zone<'a>(
     .parse(input)?;
     let (day, hour, minute) = fields;
     *refernce_time += jiff::SignedDuration::from_hours(1);
-    let timestamp = get_date_form_fields(&refernce_time, day, hour, minute);
+    let timestamp = get_date_form_fields(refernce_time, day, hour, minute);
     Ok((rest, Timestamp { timestamp }))
 }
 

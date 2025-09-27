@@ -1,5 +1,3 @@
-use std::convert::identity;
-
 use indexmap::IndexMap;
 use itertools::{
     Itertools,
@@ -8,7 +6,7 @@ use itertools::{
 use jiff::Zoned;
 use metar_decoder::{
     metar::Metar,
-    obscuration::{Cloud, CloudCoverage, Obscuration, Visibility, VisibilityUnit},
+    obscuration::{Cloud, CloudCoverage, Obscuration, VisibilityUnit},
     optional_data::OptionalData,
 };
 
@@ -116,50 +114,50 @@ impl Airport {
         let mut visibility_below_5000 = false;
         let mut reported_vv = false;
 
-        if let Some(metar) = &self.metar {
-            if let Obscuration::Described(described_obscuration) = &metar.obscuration {
-                let CEILING_CLOUDS = [CloudCoverage::Broken, CloudCoverage::Overcast];
-                ceiling_for_lvp = described_obscuration
-                    .clouds
-                    .iter()
-                    .filter_map(|cloud| match cloud {
-                        Cloud::CloudData(cloud_data) => Some(cloud_data),
-                        Cloud::NCD | Cloud::NSC => None,
-                    })
-                    .filter(|cloud| {
-                        if let OptionalData::Data(coverage) = &cloud.coverage {
-                            CEILING_CLOUDS.contains(&coverage)
-                        } else {
-                            true // If coverage is undefined, we assume its broken or overcast
-                        }
-                    })
-                    .any(|cloud| {
-                        if let OptionalData::Data(height) = &cloud.height {
-                            height.height < 500 // Ceiling below 500 feet
-                        } else {
-                            true // If height is undefined, we assume its below 500 feet
-                        }
-                    });
-
-                rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
-                    if let OptionalData::Data(value) = rvr.value {
-                        value < 1000
+        if let Some(metar) = &self.metar
+            && let Obscuration::Described(described_obscuration) = &metar.obscuration
+        {
+            let ceiling_clouds = [CloudCoverage::Broken, CloudCoverage::Overcast];
+            ceiling_for_lvp = described_obscuration
+                .clouds
+                .iter()
+                .filter_map(|cloud| match cloud {
+                    Cloud::CloudData(cloud_data) => Some(cloud_data),
+                    Cloud::NCD | Cloud::NSC => None,
+                })
+                .filter(|cloud| {
+                    if let OptionalData::Data(coverage) = &cloud.coverage {
+                        ceiling_clouds.contains(coverage)
                     } else {
-                        true
+                        true // If coverage is undefined, we assume its broken or overcast
+                    }
+                })
+                .any(|cloud| {
+                    if let OptionalData::Data(height) = &cloud.height {
+                        height.height < 500 // Ceiling below 500 feet
+                    } else {
+                        true // If height is undefined, we assume its below 500 feet
                     }
                 });
 
-                if let VisibilityUnit::Meters(data) = described_obscuration.visibility.value {
-                    visibility_below_5000 = if let OptionalData::Data(value) = data {
-                        value < 5000
-                    } else {
-                        true
-                    }
+            rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
+                if let OptionalData::Data(value) = rvr.value {
+                    value < 1000
+                } else {
+                    true
                 }
-                // TODO: Handle statute miles visibility
+            });
 
-                let reported_vv = false; // TODO: Handle vertical visibility
+            if let VisibilityUnit::Meters(data) = described_obscuration.visibility.value {
+                visibility_below_5000 = if let OptionalData::Data(value) = data {
+                    value < 5000
+                } else {
+                    true
+                }
             }
+            // TODO: Handle statute miles visibility
+
+            reported_vv = false; // TODO: Handle vertical visibility
         }
 
         let now = Zoned::now()
@@ -169,12 +167,10 @@ impl Airport {
             EngmModes::Segregated
         } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo")? > now {
             EngmModes::Single // could be segregated / mixed if weather is bad, but currently out of scope
+        } else if ceiling_for_lvp || rvr_reported || visibility_below_5000 || reported_vv {
+            EngmModes::Segregated
         } else {
-            if ceiling_for_lvp || rvr_reported || visibility_below_5000 || reported_vv {
-                EngmModes::Segregated
-            } else {
-                EngmModes::Mixed
-            }
+            EngmModes::Mixed
         };
 
         let mut map = IndexMap::new();
@@ -226,8 +222,7 @@ impl Airport {
             .unwrap();
 
         if let Some(metar) = self.metar.as_ref() {
-            let crosswind_main_runway =
-                calculate_max_crosswind(&main_runway_direction, &metar.wind);
+            let crosswind_main_runway = calculate_max_crosswind(main_runway_direction, &metar.wind);
             if crosswind_main_runway.is_none() {
                 return default_fallback;
             }

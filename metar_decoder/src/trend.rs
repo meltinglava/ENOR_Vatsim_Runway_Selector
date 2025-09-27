@@ -1,11 +1,4 @@
-use nom::{
-    Parser,
-    branch::alt,
-    bytes::complete::tag,
-    character::complete::space0,
-    combinator::{opt, value},
-    sequence::preceded,
-};
+use nom::{Parser, character::complete::space0, combinator::opt, sequence::preceded};
 
 use crate::{
     obscuration::{Obscuration, nom_obscuration},
