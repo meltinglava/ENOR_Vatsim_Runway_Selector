@@ -1,4 +1,4 @@
-pub mod becoming;
+pub mod trend;
 pub mod metar;
 pub mod obscuration;
 pub mod optional_data;
