@@ -1,14 +1,15 @@
 use std::{
     fs::{self, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, sync::LazyLock, time::SystemTime,
 };
 
 use config::{Config, ConfigError};
 use directories::{BaseDirs, ProjectDirs, UserDirs};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use jiff::civil::DateTime;
+use jiff::{civil::{datetime, DateTime}, tz::TimeZone};
+use regex::Regex;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -172,7 +173,7 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
     let ud = UserDirs::new();
     let mut possibilities = [
         bd.map(|d| d.config_dir().join("Euroscope")),
-        ud.and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
+        ud.clone().and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
     ]
     .into_iter()
     .flatten()
@@ -184,8 +185,6 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
     })
     .collect_vec();
 
-    let extra_locations = [];
-    possibilities.extend(extra_locations);
     possibilities.retain(|p| p.exists() && p.is_dir());
 
     let sct_files = possibilities
@@ -208,17 +207,42 @@ fn search_for_euroscope_newest_sct_file() -> Option<PathBuf> {
     sct_files.iter().max_by_key(get_es_file_name_time).cloned()
 }
 
+fn get_es_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
+    path.as_ref().file_stem().map(|s| s.to_string_lossy().to_string())
+}
+
 fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
     // example file name: ENOR-Norway-NC_20250612121259-241301-0006.sct
-    let file_name = path.as_ref().file_name().unwrap().to_string_lossy();
-    let time_str = file_name
-        .split('-')
-        .nth(2)
-        .unwrap()
-        .split_once('_')
-        .unwrap()
-        .1;
-    DateTime::strptime("%Y%m%d%H%M%S", time_str).unwrap()
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?<time>\d{14})").unwrap()
+    });
+
+    if let Some(caps) = RE.captures(get_es_file_name(path).as_deref().unwrap_or("")) {
+        if let Some(time_str) = caps.name("time") {
+            if let Ok(dt) = DateTime::strptime("%Y%m%d%H%M%S", time_str.as_str()) {
+                return dt;
+            }
+        }
+    }
+    path
+        .as_ref()
+        .metadata()
+        .and_then(|m| m.created())
+        .map(systemtime_to_jiff_datetime)
+        .unwrap_or(datetime(1970, 1, 1, 0, 0, 0, 0))
+}
+
+fn systemtime_to_jiff_datetime(st: SystemTime) -> DateTime {
+    // Convert to duration since UNIX_EPOCH
+    let duration = st.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+
+    // Convert seconds and nanoseconds into a jiff DateTime (UTC)
+    let ts = jiff::Timestamp::from_second(duration.as_secs() as i64)
+        .unwrap();
+    let mut zoned = ts.to_zoned(TimeZone::system());
+    zoned = zoned.with_time_zone(TimeZone::UTC);
+    zoned.datetime()
 }
 
 #[cfg(test)]
@@ -250,5 +274,13 @@ mod tests {
         let result = read_active_airport(&mut cursor).unwrap();
         let expected = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0";
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_get_es_file_name() {
+        let p = "ENOR-Norway-NC-DEV_20230403191923-230301-0004.sct";
+        let dt = get_es_file_name_time(&p);
+        let target = DateTime::strptime("%Y%m%d%H%M%S", "20230403191923").unwrap();
+        assert_eq!(dt, target);
     }
 }
