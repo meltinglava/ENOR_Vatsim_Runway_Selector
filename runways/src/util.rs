@@ -21,7 +21,6 @@ pub fn diff_rotation(a: u32, b: u32) -> u32 {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_diff_angle() {
         assert_eq!(diff_angle(10, 350), 20);

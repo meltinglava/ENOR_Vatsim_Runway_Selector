@@ -1,5 +1,11 @@
 use nom::{
-    branch::alt, bytes::complete::{tag, take}, character::complete::{self, alphanumeric1, u32}, combinator::{all_consuming, map, map_parser, map_res, opt, value}, multi::{many0, many1, separated_list0}, sequence::{preceded, separated_pair, terminated}, Parser
+    Parser,
+    branch::alt,
+    bytes::complete::{tag, take},
+    character::complete::{self, alphanumeric1, u32},
+    combinator::{all_consuming, map, map_parser, map_res, opt, value},
+    multi::{many0, many1, separated_list0},
+    sequence::{preceded, separated_pair, terminated},
 };
 
 use crate::{
@@ -18,7 +24,7 @@ pub struct DescribedObscuration {
     pub visibility: Visibility,
     pub rvr: Vec<Rvr>,
     pub clouds: Vec<Cloud>,
-    pub present_weather: Vec<PresentWeather>
+    pub present_weather: Vec<PresentWeather>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -92,45 +98,45 @@ pub struct PresentWeather {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum WeatherIntensity {
-    Light,  // -
-    Heavy,  // +
-    Vicinity,  // VC
+    Light,    // -
+    Heavy,    // +
+    Vicinity, // VC
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Qualifier {
-    Shallow,  // MI
-    Patches,  // BC
-    Partial,  // PR
-    Low,  // DR_drifting
-    Blowing,  // BL
-    Showers,  // SH
-    Thunderstorm,  // TS
-    Freezing,  // FZ
+    Shallow,      // MI
+    Patches,      // BC
+    Partial,      // PR
+    Low,          // DR_drifting
+    Blowing,      // BL
+    Showers,      // SH
+    Thunderstorm, // TS
+    Freezing,     // FZ
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum WeatherPhenomenon {
-    DZ,  // Drizzle
-    RA,  // Rain
-    SN,  // Snow
-    SG,  // Snow grains
-    PL,  // Ice pellets
-    GR,  // Hail
-    GS,  // Small hail and/or snow pellets
-    UP,  // Unknown precipitation
-    BR,  // Mist
-    FG,  // Fog
-    FU,  // Smoke
-    VA,  // Volcanic ash
-    DU,  // Widespread dust
-    SA,  // Sand
-    HZ,  // Haze
-    PO,  // Dust/sandwhirls (dust devils)
-    SQ,  // Squalls
-    FC,  // Funnelcloud
-    SS,  // Sandstorm
-    DS,  // Duststorm
+    DZ, // Drizzle
+    RA, // Rain
+    SN, // Snow
+    SG, // Snow grains
+    PL, // Ice pellets
+    GR, // Hail
+    GS, // Small hail and/or snow pellets
+    UP, // Unknown precipitation
+    BR, // Mist
+    FG, // Fog
+    FU, // Smoke
+    VA, // Volcanic ash
+    DU, // Widespread dust
+    SA, // Sand
+    HZ, // Haze
+    PO, // Dust/sandwhirls (dust devils)
+    SQ, // Squalls
+    FC, // Funnelcloud
+    SS, // Sandstorm
+    DS, // Duststorm
 }
 
 pub(crate) fn nom_obscuration(input: &str) -> nom::IResult<&str, Obscuration> {
@@ -145,9 +151,18 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
     map(
         (
             nom_visibility,
-            preceded(opt(complete::char(' ')), separated_list0(complete::char(' '), nom_present_weather)),
-            preceded(opt(complete::char(' ')), separated_list0(complete::char(' '), nom_rvr)),
-            preceded(opt(complete::char(' ')), separated_list0(complete::char(' '), nom_cloud)),
+            preceded(
+                opt(complete::char(' ')),
+                separated_list0(complete::char(' '), nom_present_weather),
+            ),
+            preceded(
+                opt(complete::char(' ')),
+                separated_list0(complete::char(' '), nom_rvr),
+            ),
+            preceded(
+                opt(complete::char(' ')),
+                separated_list0(complete::char(' '), nom_cloud),
+            ),
         ),
         |(visibility, present_weather, rvr, clouds)| DescribedObscuration {
             visibility,
@@ -163,7 +178,10 @@ fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
     (
         alt((
             map(nom_statute_miles_visibility, VisibilityUnit::StatuteMiles),
-            map(OptionalData::optional_field(map_parser(take(4usize), all_consuming(u32))), VisibilityUnit::Meters),
+            map(
+                OptionalData::optional_field(map_parser(take(4usize), all_consuming(u32))),
+                VisibilityUnit::Meters,
+            ),
         )),
         opt(tag("NDV")).map(|ndv| ndv.is_some()),
     )
@@ -263,7 +281,7 @@ fn nom_cloud(input: &str) -> nom::IResult<&str, Cloud> {
         value(Cloud::NSC, tag("NSC")),
         map(nom_cloud_data, Cloud::CloudData),
     ))
-        .parse(input)
+    .parse(input)
 }
 
 fn nom_cloud_data(input: &str) -> nom::IResult<&str, CloudData> {
@@ -331,8 +349,9 @@ fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeather> {
                     phenomena,
                 })
             }
-        })
-        .parse(input)
+        },
+    )
+    .parse(input)
 }
 
 #[cfg(test)]
@@ -359,7 +378,7 @@ mod tests {
                 ndv: false,
             },
             rvr: vec![],
-            clouds: vec![Cloud::CloudData( CloudData {
+            clouds: vec![Cloud::CloudData(CloudData {
                 coverage: OptionalData::Data(CloudCoverage::Overcast),
                 height: OptionalData::Data(CloudHeight { height: 18 }),
                 cloud_type: Some(OptionalData::Undefined),

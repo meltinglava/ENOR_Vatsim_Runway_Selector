@@ -5,10 +5,13 @@ use regex::Regex;
 use crate::runway::RunwayUse;
 
 pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
-    static SINGLE: Lazy<Regex> = Lazy::new(|| Regex::new(r"RUNWAY IN USE ([0-9]{2}[LRC]*)").unwrap());
+    static SINGLE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"RUNWAY IN USE ([0-9]{2}[LRC]*)").unwrap());
     static ARR: Lazy<Regex> = Lazy::new(|| Regex::new(r"APPROACH RWY ([0-9]{2}[LRC]*)").unwrap());
-    static DEP: Lazy<Regex> = Lazy::new(|| Regex::new(r"DEPARTURE RUNWAY ([0-9]{2}[LRC]*)").unwrap());
-    static MULTI: Lazy<Regex> = Lazy::new(|| Regex::new(r"RUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE").unwrap());
+    static DEP: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"DEPARTURE RUNWAY ([0-9]{2}[LRC]*)").unwrap());
+    static MULTI: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"RUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE").unwrap());
 
     let mut runways = IndexMap::new();
 
@@ -25,7 +28,6 @@ pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
 
     runways
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,15 +1,18 @@
-use indexmap::{IndexMap, IndexSet};
 use encoding::{
-    all::{ISO_8859_1, UTF_8},
     DecoderTrap, Encoding,
+    all::{ISO_8859_1, UTF_8},
+};
+use indexmap::{IndexMap, IndexSet};
+
+use std::{
+    io::Read,
+    ops::{Index, IndexMut},
 };
 
-use std::{io::Read, ops::{Index, IndexMut}};
-
-use crate::{airport::Airport, config::ESConfig, error::ApplicationResult};
 use crate::atis::find_runway_in_use_from_atis;
-use crate::runway::{Runway, RunwayDirection, RunwayUse};
 use crate::metar::get_metars;
+use crate::runway::{Runway, RunwayDirection, RunwayUse};
+use crate::{airport::Airport, config::ESConfig, error::ApplicationResult};
 
 pub struct Airports {
     pub airports: IndexMap<String, Airport>,
@@ -27,28 +30,46 @@ impl Airports {
         self.airports.insert(airport.icao.clone(), airport);
     }
 
-    pub fn fill_known_airports<R: Read>(&mut self, reader: &mut R, config: &ESConfig) -> ApplicationResult<()> {
+    pub fn fill_known_airports<R: Read>(
+        &mut self,
+        reader: &mut R,
+        config: &ESConfig,
+    ) -> ApplicationResult<()> {
         let sct_file = read_with_encoings(reader).expect("Failed to read SCT file");
         let ignored_set = config.get_ignore_airports();
 
-        for line in sct_file.lines().skip_while(|line| *line != "[RUNWAY]").skip(1).take_while(|line| !line.is_empty()) {
+        for line in sct_file
+            .lines()
+            .skip_while(|line| *line != "[RUNWAY]")
+            .skip(1)
+            .take_while(|line| !line.is_empty())
+        {
             let parts: Vec<_> = line.split_whitespace().collect();
             let icao = *parts.last().unwrap();
             if ignored_set.contains(icao) {
                 continue;
             }
 
-            let airport = self.airports.entry(icao.to_string()).or_insert_with(|| Airport {
-                icao: icao.to_string(),
-                metar: None,
-                runways: Vec::new(),
-                runways_in_use: IndexMap::new(),
-            });
+            let airport = self
+                .airports
+                .entry(icao.to_string())
+                .or_insert_with(|| Airport {
+                    icao: icao.to_string(),
+                    metar: None,
+                    runways: Vec::new(),
+                    runways_in_use: IndexMap::new(),
+                });
 
             let runway = Runway {
                 runways: [
-                    RunwayDirection { degrees: parts[2].parse()?, identifier: parts[0].into() },
-                    RunwayDirection { degrees: parts[3].parse()?, identifier: parts[1].into() },
+                    RunwayDirection {
+                        degrees: parts[2].parse()?,
+                        identifier: parts[0].into(),
+                    },
+                    RunwayDirection {
+                        degrees: parts[3].parse()?,
+                        identifier: parts[1].into(),
+                    },
                 ],
             };
             airport.runways.push(runway);
@@ -72,31 +93,51 @@ impl Airports {
             .json::<serde_json::Value>()
             .await?;
 
-        let serde_json::Value::Object(map) = data else { return Ok(()); };
-        let Some(serde_json::Value::Array(atises)) = map.get("atis") else { return Ok(()); };
+        let serde_json::Value::Object(map) = data else {
+            return Ok(());
+        };
+        let Some(serde_json::Value::Array(atises)) = map.get("atis") else {
+            return Ok(());
+        };
 
         for atis in atises {
-            let serde_json::Value::Object(atis) = atis else { continue; };
-            let Some(serde_json::Value::String(callsign)) = atis.get("callsign") else { continue; };
+            let serde_json::Value::Object(atis) = atis else {
+                continue;
+            };
+            let Some(serde_json::Value::String(callsign)) = atis.get("callsign") else {
+                continue;
+            };
             let icao = &callsign[0..4];
 
             if !icaos.contains(icao) {
                 continue;
             }
 
-            let Some(airport) = self.airports.get_mut(icao) else { continue; };
-            let Some(serde_json::Value::Array(atis_lines)) = atis.get("text_atis") else { continue; };
+            let Some(airport) = self.airports.get_mut(icao) else {
+                continue;
+            };
+            let Some(serde_json::Value::Array(atis_lines)) = atis.get("text_atis") else {
+                continue;
+            };
 
-            let text = atis_lines.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" ");
+            let text = atis_lines
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             for (runway, config) in find_runway_in_use_from_atis(&text) {
-                airport.runways_in_use.entry(runway).and_modify(|e| {
-                    *e = match (*e, config) {
-                        (RunwayUse::Both, _) | (_, RunwayUse::Both) => RunwayUse::Both,
-                        (RunwayUse::Arriving, RunwayUse::Departing) |
-                        (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
-                        (e, _) => e,
-                    }
-                }).or_insert(config);
+                airport
+                    .runways_in_use
+                    .entry(runway)
+                    .and_modify(|e| {
+                        *e = match (*e, config) {
+                            (RunwayUse::Both, _) | (_, RunwayUse::Both) => RunwayUse::Both,
+                            (RunwayUse::Arriving, RunwayUse::Departing)
+                            | (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
+                            (e, _) => e,
+                        }
+                    })
+                    .or_insert(config);
             }
         }
 
@@ -119,14 +160,19 @@ impl Airports {
         for airport in self.airports.values_mut() {
             if airport.runways_in_use.is_empty() {
                 if let Some(runway) = defaults.get(airport.icao.as_str()) {
-                    airport.runways_in_use.insert(format!("{runway:02}"), RunwayUse::Both);
+                    airport
+                        .runways_in_use
+                        .insert(format!("{runway:02}"), RunwayUse::Both);
                 }
             }
         }
     }
 
     pub fn airports_without_runway_config(&self) -> Vec<&Airport> {
-        self.airports.values().filter(|a| a.runways_in_use.is_empty()).collect()
+        self.airports
+            .values()
+            .filter(|a| a.runways_in_use.is_empty())
+            .collect()
     }
 
     pub fn identifiers(&self) -> IndexSet<String> {
@@ -170,7 +216,6 @@ fn read_with_encoings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn make_test_airport() {
         let mut ap = Airports::new();
@@ -181,7 +226,5 @@ mod tests {
     }
 
     #[test]
-    fn test_name() {
-
-    }
+    fn test_name() {}
 }

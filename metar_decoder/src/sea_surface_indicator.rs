@@ -1,4 +1,10 @@
-use nom::{branch::alt, character::complete, combinator::complete, sequence::{preceded, separated_pair}, Parser};
+use nom::{
+    Parser,
+    branch::alt,
+    character::complete,
+    combinator::complete,
+    sequence::{preceded, separated_pair},
+};
 
 use crate::{optional_data::OptionalData, temprature::nom_maybe_negative_temp};
 
@@ -31,11 +37,14 @@ pub enum CodeTable3700 {
 
 pub(crate) fn nom_sea_surface_indicator(input: &str) -> nom::IResult<&str, SeaSurfaceIndicator> {
     let (rest, (temperature, state_of_sea)) = separated_pair(
-        preceded(complete::char('W'), OptionalData::optional_field(nom_maybe_negative_temp)),
+        preceded(
+            complete::char('W'),
+            OptionalData::optional_field(nom_maybe_negative_temp),
+        ),
         complete::char('/'),
         alt((nom_state_of_sea, nom_significant_wave_height)),
     )
-        .parse(input)?;
+    .parse(input)?;
     Ok((
         rest,
         SeaSurfaceIndicator {
@@ -46,24 +55,24 @@ pub(crate) fn nom_sea_surface_indicator(input: &str) -> nom::IResult<&str, SeaSu
 }
 
 pub(crate) fn nom_state_of_sea(input: &str) -> nom::IResult<&str, StateOfSea> {
-    preceded(complete::char('S'), OptionalData::optional_field(
-        complete::u8
-            .map_res(|code| match code {
-                0 => Ok(CodeTable3700::CalmGlassLike),
-                1 => Ok(CodeTable3700::CalmRippled),
-                2 => Ok(CodeTable3700::Smooth),
-                3 => Ok(CodeTable3700::Slight),
-                4 => Ok(CodeTable3700::Moderate),
-                5 => Ok(CodeTable3700::Rough),
-                6 => Ok(CodeTable3700::VeryRough),
-                7 => Ok(CodeTable3700::High),
-                8 => Ok(CodeTable3700::VeryHigh),
-                9 => Ok(CodeTable3700::Phenomenal),
-                _ => Err("Invalid code for State of Sea"),
-            })
-    ))
-        .map(StateOfSea::SeaSate)
-        .parse(input)
+    preceded(
+        complete::char('S'),
+        OptionalData::optional_field(complete::u8.map_res(|code| match code {
+            0 => Ok(CodeTable3700::CalmGlassLike),
+            1 => Ok(CodeTable3700::CalmRippled),
+            2 => Ok(CodeTable3700::Smooth),
+            3 => Ok(CodeTable3700::Slight),
+            4 => Ok(CodeTable3700::Moderate),
+            5 => Ok(CodeTable3700::Rough),
+            6 => Ok(CodeTable3700::VeryRough),
+            7 => Ok(CodeTable3700::High),
+            8 => Ok(CodeTable3700::VeryHigh),
+            9 => Ok(CodeTable3700::Phenomenal),
+            _ => Err("Invalid code for State of Sea"),
+        })),
+    )
+    .map(StateOfSea::SeaSate)
+    .parse(input)
 }
 
 pub(crate) fn nom_significant_wave_height(input: &str) -> nom::IResult<&str, StateOfSea> {
@@ -71,10 +80,9 @@ pub(crate) fn nom_significant_wave_height(input: &str) -> nom::IResult<&str, Sta
         complete::char('H'),
         OptionalData::optional_field(complete::u16),
     )
-        .map(StateOfSea::SignificantWaveHeight)
-        .parse(input)
+    .map(StateOfSea::SignificantWaveHeight)
+    .parse(input)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -117,7 +125,6 @@ mod tests {
             },
         ),
     ];
-
 
     #[test]
     fn test_name() {

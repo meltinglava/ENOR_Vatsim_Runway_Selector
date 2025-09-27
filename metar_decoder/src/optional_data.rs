@@ -59,7 +59,7 @@ where
     }
 }
 
-impl <const N: usize, T> From<OptionalData<T, N>> for Option<T> {
+impl<const N: usize, T> From<OptionalData<T, N>> for Option<T> {
     fn from(value: OptionalData<T, N>) -> Self {
         match value {
             OptionalData::Undefined => None,
@@ -67,7 +67,6 @@ impl <const N: usize, T> From<OptionalData<T, N>> for Option<T> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
