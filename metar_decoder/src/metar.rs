@@ -16,11 +16,11 @@ use nom::{
 };
 
 use crate::{
-    becoming::{Trend, nom_becoming},
     obscuration::{Obscuration, PresentWeather, nom_obscuration, nom_recent_present_weather},
     pressure::{Pressure, nom_pressure},
     sea_surface_indicator::{SeaSurfaceIndicator, nom_sea_surface_indicator},
     temprature::{TempratureInfo, nom_temprature_info},
+    trend::{Trend, nom_becoming},
     units::timestamp::{Timestamp, nom_metar_timestamp},
     wind::{Wind, nom_wind},
 };
