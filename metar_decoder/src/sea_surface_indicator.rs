@@ -2,7 +2,6 @@ use nom::{
     Parser,
     branch::alt,
     character::complete,
-    combinator::complete,
     sequence::{preceded, separated_pair},
 };
 
@@ -11,7 +10,7 @@ use crate::{optional_data::OptionalData, temprature::nom_maybe_negative_temp};
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SeaSurfaceIndicator {
     pub temperature: OptionalData<i32, 2>,
-    pub state_of_sea: StateOfSea,
+    pub state_of_sea: OptionalData<StateOfSea, 2>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -42,7 +41,7 @@ pub(crate) fn nom_sea_surface_indicator(input: &str) -> nom::IResult<&str, SeaSu
             OptionalData::optional_field(nom_maybe_negative_temp),
         ),
         complete::char('/'),
-        alt((nom_state_of_sea, nom_significant_wave_height)),
+        OptionalData::optional_field(alt((nom_state_of_sea, nom_significant_wave_height))),
     )
     .parse(input)?;
     Ok((
@@ -88,40 +87,47 @@ pub(crate) fn nom_significant_wave_height(input: &str) -> nom::IResult<&str, Sta
 mod tests {
     use super::*;
 
-    const TEST_INPUT_1: [(&str, SeaSurfaceIndicator); 5] = [
+    const TEST_INPUT_1: [(&str, SeaSurfaceIndicator); 6] = [
         (
             "W19/S4",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(19),
-                state_of_sea: StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Moderate)),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Moderate))),
             },
         ),
         (
             "WM12/H75",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(-12),
-                state_of_sea: StateOfSea::SignificantWaveHeight(OptionalData::Data(75)),
+                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(OptionalData::Data(75))),
             },
         ),
         (
             "W///S3",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Undefined,
-                state_of_sea: StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Slight)),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Slight))),
             },
         ),
         (
             "W17/S/",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(17),
-                state_of_sea: StateOfSea::SeaSate(OptionalData::Undefined),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Undefined)),
             },
         ),
         (
             "W17/H///",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(17),
-                state_of_sea: StateOfSea::SignificantWaveHeight(OptionalData::Undefined),
+                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(OptionalData::Undefined)),
+            },
+        ),
+        (
+            "W22///",
+            SeaSurfaceIndicator {
+                temperature: OptionalData::Data(22),
+                state_of_sea: OptionalData::Undefined,
             },
         ),
     ];
