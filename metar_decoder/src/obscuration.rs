@@ -4,7 +4,7 @@ use nom::{
     bytes::complete::{tag, take},
     character::complete::{self, alphanumeric1, u32},
     combinator::{all_consuming, map, map_parser, map_res, opt, value},
-    multi::{many0, many1, separated_list0},
+    multi::{many0, many1, separated_list0, separated_list1},
     sequence::{preceded, separated_pair, terminated},
 };
 
@@ -350,6 +350,14 @@ fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeather> {
                 })
             }
         },
+    )
+    .parse(input)
+}
+
+pub(crate) fn nom_recent_present_weather(input: &str) -> nom::IResult<&str, Vec<PresentWeather>> {
+    separated_list1(
+        complete::char(' '),
+        preceded(tag("RE"), nom_present_weather),
     )
     .parse(input)
 }

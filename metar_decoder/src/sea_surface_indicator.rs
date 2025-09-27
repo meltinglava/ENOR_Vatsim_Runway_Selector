@@ -92,21 +92,27 @@ mod tests {
             "W19/S4",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(19),
-                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Moderate))),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(
+                    CodeTable3700::Moderate,
+                ))),
             },
         ),
         (
             "WM12/H75",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(-12),
-                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(OptionalData::Data(75))),
+                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(
+                    OptionalData::Data(75),
+                )),
             },
         ),
         (
             "W///S3",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Undefined,
-                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(CodeTable3700::Slight))),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(
+                    CodeTable3700::Slight,
+                ))),
             },
         ),
         (
@@ -120,7 +126,9 @@ mod tests {
             "W17/H///",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(17),
-                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(OptionalData::Undefined)),
+                state_of_sea: OptionalData::Data(StateOfSea::SignificantWaveHeight(
+                    OptionalData::Undefined,
+                )),
             },
         ),
         (
