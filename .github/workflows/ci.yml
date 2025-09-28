@@ -30,7 +30,7 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            wayland-dev wayland-protocols \
+            wayland-dev wayland-protocols wayland-libs-client \
             libxkbcommon-dev
 
       - name: Set up Rust components
@@ -56,7 +56,7 @@ jobs:
           TARGET: x86_64-unknown-linux-musl
         run: |
           "rustup target add $TARGET || true"
-          "cargo build --release --target $TARGET --locked"
+          "cargo build --target $TARGET --locked"
 
   # ---------- Linux (musl) build on tag, in Alpine ----------
   release_linux_musl:
