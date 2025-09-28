@@ -30,7 +30,7 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            wayland-dev wayland-protocols wayland-libs-client \
+            wayland-dev wayland-protocols wayland-libs-client wayland-libs-client-static \
             libxkbcommon-dev
 
       - name: Set up Rust components
