@@ -13,8 +13,8 @@ repos:
       - id: detect-private-key
       - id: forbid-submodules
 
-  - repo: 'https://github.com/doublify/pre-commit-rust'
-    rev: v1.0
+  - repo: 'https://github.com/FeryET/pre-commit-rust'
+    rev: v1.2.1
     hooks:
       - id: fmt
       - id: cargo-check
