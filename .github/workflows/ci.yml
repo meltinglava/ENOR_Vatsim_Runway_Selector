@@ -4,21 +4,23 @@ on:
   pull_request:
     branches: ["**"]
   push:
-    branches: ["main"]
+    tags:
+      - "v*"
 
-# Cancel stale runs on the same branch/PR
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write # needed to publish releases
 
 jobs:
-  # -------- PR checks: Linux only --------
+  # ---------- PR checks: Linux only ----------
   pr_check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    container:
+      image: rust:1-bookworm-slim
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,8 +32,6 @@ jobs:
 
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
           rustup component add rustfmt clippy
 
       - name: Cache cargo
@@ -43,67 +43,71 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Test
         run: cargo test --all-features --locked
 
-  # -------- Release builds on push to main --------
-  release_builds:
-    if: github.event_name == 'push'
+  # ---------- Tagged release builds ----------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
-      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            container: messense/rust-musl-cross:x86_64-musl
             target: x86_64-unknown-linux-musl
             artifact_suffix: linux-musl
           - os: windows-latest
+            container: ""
             target: x86_64-pc-windows-msvc
             artifact_suffix: windows-msvc
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # cargo-release needs tags
 
       - name: Set up Rust
+        if: matrix.container == ''
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add ${{ matrix.target }}
-
-      - name: Install deps (musl toolchain)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools libwayland-dev pkg-config
-          # musl target uses musl-gcc as linker, provided by musl-tools
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - name: Build (release)
+      - name: Install cargo-release
+        run: cargo install cargo-release
+
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} --locked
 
-      # Upload only the compiled binaries from the release dir.
-      # If you build multiple binaries, they’ll all be included.
-      - name: Upload artifact (Linux musl)
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/* dist/ || true
+          cd dist
+          tar czf ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz ./*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}
+          path: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz
+
+      - name: Publish GitHub release
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}
-          path: |
-            target/${{ matrix.target }}/release/vatsca_es_setup
-          if-no-files-found: error
-
-      - name: Upload artifact (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}
-          path: |
-
-            target/${{ matrix.target }}/release/vatsca_es_setup.exe
-          if-no-files-found: error
+          files: |
+            ${{ github.event.repository.name }}-linux-musl.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
