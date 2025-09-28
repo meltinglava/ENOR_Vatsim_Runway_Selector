@@ -13,12 +13,21 @@ repos:
       - id: detect-private-key
       - id: forbid-submodules
 
-  - repo: 'https://github.com/FeryET/pre-commit-rust'
-    rev: v1.2.1
+  - repo: local
     hooks:
-      - id: fmt
-      - id: cargo-check
-      - id: clippy
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        pass_filenames: false # This makes it a lot faster
+
+      - id: cargo-clippy
+        name: cargo clippy
+        language: system
+        types: [rust]
+        pass_filenames: false
+        entry: cargo clippy --all-targets --all-features -- -D warnings
 
   - repo: 'https://github.com/rhysd/actionlint'
     rev: v1.7.7
