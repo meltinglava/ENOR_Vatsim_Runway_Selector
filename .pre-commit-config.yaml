@@ -27,6 +27,6 @@ repos:
 
 ci:
   skip:
-    - id: fmt
-    - id: cargo-check
-    - id: clippy
+    - fmt
+    - cargo-check
+    - clippy
