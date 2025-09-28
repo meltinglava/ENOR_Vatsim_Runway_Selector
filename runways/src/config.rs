@@ -1,14 +1,19 @@
 use std::{
     fs::{self, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf}, sync::LazyLock, time::SystemTime,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::SystemTime,
 };
 
 use config::{Config, ConfigError};
 use directories::{BaseDirs, ProjectDirs, UserDirs};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use jiff::{civil::{datetime, DateTime}, tz::TimeZone};
+use jiff::{
+    civil::{DateTime, datetime},
+    tz::TimeZone,
+};
 use regex::Regex;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
@@ -180,7 +185,8 @@ fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
     let ud = UserDirs::new();
     let mut possibilities = [
         bd.map(|d| d.config_dir().join("Euroscope")),
-        ud.clone().and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
+        ud.clone()
+            .and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
     ]
     .into_iter()
     .flatten()
@@ -197,7 +203,9 @@ fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
     search_for_ese_with_possibilities(&possibilities)
 }
 
-fn search_for_ese_with_possibilities<P: AsRef<Path>>(possibilities: &[P]) -> Option<(PathBuf, String)> {
+fn search_for_ese_with_possibilities<P: AsRef<Path>>(
+    possibilities: &[P],
+) -> Option<(PathBuf, String)> {
     let sct_files = possibilities
         .iter()
         .flat_map(|p| {
@@ -216,28 +224,32 @@ fn search_for_ese_with_possibilities<P: AsRef<Path>>(possibilities: &[P]) -> Opt
         })
         .collect::<Vec<_>>();
     let file = sct_files.iter().max_by_key(get_es_file_name_time)?;
-    Some((file.parent()?.to_owned(), Path::new(file.file_name()?).file_stem()?.to_string_lossy().to_string()))
+    Some((
+        file.parent()?.to_owned(),
+        Path::new(file.file_name()?)
+            .file_stem()?
+            .to_string_lossy()
+            .to_string(),
+    ))
 }
 
 fn get_es_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
-    path.as_ref().file_stem().map(|s| s.to_string_lossy().to_string())
+    path.as_ref()
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
 }
 
 fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
     // example file name: ENOR-Norway-NC_20250612121259-241301-0006.sct
-    static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?<time>\d{14})").unwrap()
-    });
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?<time>\d{14})").unwrap());
 
-    if let Some(caps) = RE.captures(get_es_file_name(path).as_deref().unwrap_or("")) {
-        if let Some(time_str) = caps.name("time") {
-            if let Ok(dt) = DateTime::strptime("%Y%m%d%H%M%S", time_str.as_str()) {
-                return dt;
-            }
-        }
+    if let Some(caps) = RE.captures(get_es_file_name(path).as_deref().unwrap_or(""))
+        && let Some(time_str) = caps.name("time")
+        && let Ok(dt) = DateTime::strptime("%Y%m%d%H%M%S", time_str.as_str())
+    {
+        return dt;
     }
-    path
-        .as_ref()
+    path.as_ref()
         .metadata()
         .and_then(|m| m.created())
         .map(systemtime_to_jiff_datetime)
@@ -248,10 +260,8 @@ fn systemtime_to_jiff_datetime(st: SystemTime) -> DateTime {
     // Convert to duration since UNIX_EPOCH
     let duration = st.duration_since(SystemTime::UNIX_EPOCH).unwrap();
 
-
     // Convert seconds and nanoseconds into a jiff DateTime (UTC)
-    let ts = jiff::Timestamp::from_second(duration.as_secs() as i64)
-        .unwrap();
+    let ts = jiff::Timestamp::from_second(duration.as_secs() as i64).unwrap();
     let mut zoned = ts.to_zoned(TimeZone::system());
     zoned = zoned.with_time_zone(TimeZone::UTC);
     zoned.datetime()

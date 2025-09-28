@@ -5,7 +5,7 @@ This application is work in progress.
 It will be used to set default runways for euroscope on Norway. Do not rely on
 this for any real world operation.
 
-This is based on alot of work by [Adrian2k](https://github.com/Adrian2k/ENOR-autorwy) 
+This is based on alot of work by [Adrian2k](https://github.com/Adrian2k/ENOR-autorwy)
 
 #### License
 

@@ -1,3 +1,11 @@
 [workspace]
 resolver = "3"
 members = ["runways", "metar_decoder"]
+
+[workspace.package]
+authors = ["meltinglava"]
+version = "0.0.1-prerelease"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Package for automaticly selecting runways for Euroscope in Polaris area"
+repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
