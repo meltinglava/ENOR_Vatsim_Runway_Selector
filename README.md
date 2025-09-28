@@ -1,5 +1,7 @@
 # ENOR runway selector
 
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/meltinglava/ENOR_Vatsim_Runway_Selector/main.svg)](https://results.pre-commit.ci/latest/github/meltinglava/ENOR_Vatsim_Runway_Selector/main)
+
 This application is work in progress.
 
 It will be used to set default runways for euroscope on Norway. Do not rely on
