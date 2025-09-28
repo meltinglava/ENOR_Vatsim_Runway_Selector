@@ -15,26 +15,23 @@ permissions:
   contents: write
 
 jobs:
-  # ---------- PR checks: Linux only (fmt, clippy, tests) ----------
+  # ---------- PR checks: Linux only (Alpine/musl) ----------
   pr_check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     container:
-      image: rust:1-slim-bookworm
+      image: rust:alpine
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system deps for Wayland
+      - name: Install Alpine build deps (Wayland + basics)
         run: |
-          apt-get update
-          # pkg-config + wayland headers (and common extras many Wayland crates expect)
-          apt-get install -y --no-install-recommends \
-            pkg-config \
-            libwayland-dev \
-            wayland-protocols \
+          apk add --no-cache \
+            build-base \
+            pkgconf pkgconfig \
+            wayland-dev wayland-protocols \
             libxkbcommon-dev
-          rm -rf /var/lib/apt/lists/*
 
       - name: Set up Rust components
         run: rustup component add rustfmt clippy
@@ -53,89 +50,116 @@ jobs:
       - name: Test
         run: cargo test --all-features --locked
 
-  # ---------- Tagged release builds ----------
-  release:
+      # Alpine uses musl by default; this ensures a release compile on musl succeeds.
+      - name: Musl build (compile check)
+        env:
+          TARGET: x86_64-unknown-linux-musl
+        run: |
+          "rustup target add $TARGET || true"
+          "cargo build --release --target $TARGET --locked"
+
+  # ---------- Linux (musl) build on tag, in Alpine ----------
+  release_linux_musl:
     if: startsWith(github.ref, 'refs/tags/v')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            container: messense/rust-musl-cross:x86_64-musl
-            target: x86_64-unknown-linux-musl
-            artifact_suffix: linux-musl
-            family: linux
-          - os: windows-latest
-            container: ""
-            target: x86_64-pc-windows-msvc
-            artifact_suffix: windows-msvc
-            family: windows
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
+    runs-on: ubuntu-latest
+    container:
+      image: rust:alpine
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Wayland deps for musl build (Alpine-based container)
-      - name: Install Wayland deps (musl)
-        if: matrix.family == 'linux'
+      - name: Install Alpine build deps (Wayland + basics)
         run: |
-          # messense/* images are Alpine-based
           apk add --no-cache \
-            pkgconfig \
-            wayland-dev \
-            wayland-protocols \
+            build-base \
+            pkgconf pkgconfig \
+            wayland-dev wayland-protocols \
             libxkbcommon-dev
-
-      # Only needed on Windows job
-      - name: Install Rust (Windows)
-        if: matrix.family == 'windows'
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - name: Install cargo-release
-        run: cargo install cargo-release
-
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} --locked
-
-      - name: Package artifact
-        shell: bash
+      - name: Build (release, musl)
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/* dist/ || true
-          cd dist
-          if [[ "${{ matrix.family }}" == "windows" ]]; then
-            7z a ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.zip ./*
-          else
-            tar czf ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz ./*
-          fi
+          "rustup target add $TARGET || true"
+          "cargo build --release --target $TARGET --locked"
+
+      - name: Package (tar.gz)
+        run: |
+          "mkdir -p dist"
+          "cp target/${TARGET}/release/* dist/ || true"
+          tar -C dist -czf "${{ github.event.repository.name }}-linux-musl.tar.gz" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}
-          path: |
-            ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz
-            ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.zip
-          if-no-files-found: ignore
+          name: ${{ github.event.repository.name }}-linux-musl
+          path: ${{ github.event.repository.name }}-linux-musl.tar.gz
+          if-no-files-found: error
 
-      - name: Publish GitHub release
-        if: matrix.family == 'linux'
+  # ---------- Windows (MSVC) build on tag ----------
+  release_windows_msvc:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = "${{ github.event.repository.name }}-windows-msvc.zip"
+          Compress-Archive -Path "target/release/*.exe","target/release/*.pdb" -DestinationPath $zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-windows-msvc
+          path: ${{ github.event.repository.name }}-windows-msvc.zip
+          if-no-files-found: error
+
+  # ---------- Publish GitHub Release with both artifacts ----------
+  publish_release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release_linux_musl, release_windows_msvc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: List artifacts (debug)
+        run: ls -R ./artifacts
+
+      - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ github.event.repository.name }}-linux-musl.tar.gz
-            ${{ github.event.repository.name }}-windows-msvc.zip
+            artifacts/${{ github.event.repository.name }}-linux-musl/${{ github.event.repository.name }}-linux-musl.tar.gz
+            artifacts/${{ github.event.repository.name }}-windows-msvc/${{ github.event.repository.name }}-windows-msvc.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
