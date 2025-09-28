@@ -12,10 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write # needed to publish releases
+  contents: write
 
 jobs:
-  # ---------- PR checks: Linux only ----------
+  # ---------- PR checks: Linux only (fmt, clippy, tests) ----------
   pr_check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -25,9 +25,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Rust
+      - name: Install system deps for Wayland
         run: |
-          rustup component add rustfmt clippy
+          apt-get update
+          # pkg-config + wayland headers (and common extras many Wayland crates expect)
+          apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Set up Rust components
+        run: rustup component add rustfmt clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -47,26 +57,41 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             container: messense/rust-musl-cross:x86_64-musl
             target: x86_64-unknown-linux-musl
             artifact_suffix: linux-musl
+            family: linux
           - os: windows-latest
             container: ""
             target: x86_64-pc-windows-msvc
             artifact_suffix: windows-msvc
+            family: windows
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # cargo-release needs tags
+          fetch-depth: 0
 
-      - name: Set up Rust
-        if: matrix.container == ''
+      # Wayland deps for musl build (Alpine-based container)
+      - name: Install Wayland deps (musl)
+        if: matrix.family == 'linux'
+        run: |
+          # messense/* images are Alpine-based
+          apk add --no-cache \
+            pkgconfig \
+            wayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev
+
+      # Only needed on Windows job
+      - name: Install Rust (Windows)
+        if: matrix.family == 'windows'
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
@@ -80,29 +105,37 @@ jobs:
       - name: Install cargo-release
         run: cargo install cargo-release
 
-      - name: Build release binary
+      - name: Build release
         run: cargo build --release --target ${{ matrix.target }} --locked
 
       - name: Package artifact
         shell: bash
         run: |
-          mkdir dist
+          mkdir -p dist
           cp target/${{ matrix.target }}/release/* dist/ || true
           cd dist
-          tar czf ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz ./*
+          if [[ "${{ matrix.family }}" == "windows" ]]; then
+            7z a ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.zip ./*
+          else
+            tar czf ../${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz ./*
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}
-          path: ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz
+          path: |
+            ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.tar.gz
+            ${{ github.event.repository.name }}-${{ matrix.artifact_suffix }}.zip
+          if-no-files-found: ignore
 
       - name: Publish GitHub release
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.family == 'linux'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ github.event.repository.name }}-linux-musl.tar.gz
+            ${{ github.event.repository.name }}-windows-msvc.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
