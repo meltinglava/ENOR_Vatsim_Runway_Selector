@@ -30,7 +30,7 @@ jobs:
           set -eux
           apk add --no-cache \
             build-base \
-            pkgconf pkgconfig \
+            pkgconf \
             libxkbcommon-dev \
             tar zstd
 
@@ -93,7 +93,13 @@ jobs:
       - name: Package (tar.gz)
         run: |
           mkdir -p dist
-          cp target/"${TARGET}"/release/* dist/ || true
+          shopt -s nullglob
+          files=(target/"${TARGET}"/release/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Error: No files found in target/${TARGET}/release/"
+           exit 1
+          fi
+          cp "${files[@]}" dist/
           tar -C dist -czf "${{ github.event.repository.name }}-linux-musl.tar.gz" .
 
       - name: Upload artifact
