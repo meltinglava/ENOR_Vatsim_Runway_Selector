@@ -87,13 +87,13 @@ jobs:
 
       - name: Build (release, musl)
         run: |
-          "rustup target add $TARGET || true"
-          "cargo build --release --target $TARGET --locked"
+          rustup target add "$TARGET" || true
+          cargo build --release --target "$TARGET" --locked
 
       - name: Package (tar.gz)
         run: |
-          "mkdir -p dist"
-          "cp target/${TARGET}/release/* dist/ || true"
+          mkdir -p dist
+          cp target/"${TARGET}"/release/* dist/ || true
           tar -C dist -czf "${{ github.event.repository.name }}-linux-musl.tar.gz" .
 
       - name: Upload artifact
