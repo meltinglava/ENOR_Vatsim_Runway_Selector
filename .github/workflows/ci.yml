@@ -27,10 +27,14 @@ jobs:
 
       - name: Install Alpine build deps (Wayland + basics)
         run: |
+          set -eux
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            gnu-tar zstd
+          # Make GNU tar the default 'tar'
+          ln -sf /usr/bin/gtar /bin/tar
 
       - name: Set up Rust components
         run: rustup component add rustfmt clippy
@@ -77,7 +81,7 @@ jobs:
             build-base \
             pkgconf pkgconfig \
             wayland-dev wayland-protocols \
-            libxkbcommon-dev
+            libxkbcommon-dev tar
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
