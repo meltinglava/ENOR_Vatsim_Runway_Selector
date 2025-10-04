@@ -31,10 +31,11 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            libxkbcommon-dev \
-            gnu-tar zstd
-          # Make GNU tar the default 'tar'
-          ln -sf /usr/bin/gtar /bin/tar
+           libxkbcommon-dev \
+            tar zstd
+          # Ensure GNU tar is the default 'tar' (override BusyBox)
+          ln -sf /usr/bin/tar /bin/tar
+          tar --version
 
       - name: Set up Rust components
         run: rustup component add rustfmt clippy
