@@ -31,11 +31,8 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-           libxkbcommon-dev \
+            libxkbcommon-dev \
             tar zstd
-          # Ensure GNU tar is the default 'tar' (override BusyBox)
-          ln -sf /usr/bin/tar /bin/tar
-          tar --version
 
       - name: Set up Rust components
         run: rustup component add rustfmt clippy
@@ -76,12 +73,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Alpine build deps (Wayland + basics)
+      - name: Install Alpine build deps
         run: |
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            wayland-dev wayland-protocols \
             libxkbcommon-dev tar
 
       - name: Cache cargo
