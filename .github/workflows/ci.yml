@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- PR checks: Linux only (Alpine/musl) ----------
+  pr_check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: rust:alpine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Alpine build deps (Wayland + basics)
+        run: |
+          set -eux
+          apk add --no-cache \
+            build-base \
+            pkgconf \
+            libxkbcommon-dev \
+            tar zstd
+
+      - name: Set up Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Rustfmt (check)
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        run: cargo test --all-features --locked
+
+      # Alpine uses musl by default; this ensures a release compile on musl succeeds.
+      - name: Musl build (compile check)
+        env:
+          TARGET: x86_64-unknown-linux-musl
+        run: |
+          rustup target add "$TARGET" || true
+          cargo build --target "$TARGET" --locked
+
+  # ---------- Linux (musl) build on tag, in Alpine ----------
+  release_linux_musl:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    container:
+      image: rust:alpine
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Alpine build deps
+        run: |
+          apk add --no-cache \
+            build-base \
+            pkgconf pkgconfig \
+            libxkbcommon-dev tar
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build (release, musl)
+        run: |
+          rustup target add "$TARGET" || true
+          cargo build --release --target "$TARGET" --locked
+
+      - name: Package (tar.gz)
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          files=(target/"${TARGET}"/release/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Error: No files found in target/${TARGET}/release/"
+           exit 1
+          fi
+          cp "${files[@]}" dist/
+          tar -C dist -czf "${{ github.event.repository.name }}-linux-musl.tar.gz" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-linux-musl
+          path: ${{ github.event.repository.name }}-linux-musl.tar.gz
+          if-no-files-found: error
+
+  # ---------- Windows (MSVC) build on tag ----------
+  release_windows_msvc:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust (stable)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Package (zip)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = "${{ github.event.repository.name }}-windows-msvc.zip"
+          $exeFiles = Get-ChildItem -Path "target/release" -Filter *.exe | Select-Object -ExpandProperty FullName
+          $pdbFiles = Get-ChildItem -Path "target/release" -Filter *.pdb | Select-Object -ExpandProperty FullName
+          if ($pdbFiles) {
+            Compress-Archive -Path @($exeFiles + $pdbFiles) -DestinationPath $zip -Force
+          } else {
+            Compress-Archive -Path $exeFiles -DestinationPath $zip -Force
+          }
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-windows-msvc
+          path: ${{ github.event.repository.name }}-windows-msvc.zip
+          if-no-files-found: error
+
+  # ---------- Publish GitHub Release with both artifacts ----------
+  publish_release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release_linux_musl, release_windows_msvc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: List artifacts (debug)
+        run: ls -R ./artifacts
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/${{ github.event.repository.name }}-linux-musl/${{ github.event.repository.name }}-linux-musl.tar.gz
+            artifacts/${{ github.event.repository.name }}-windows-msvc/${{ github.event.repository.name }}-windows-msvc.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
