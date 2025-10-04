@@ -1,12 +1,15 @@
 use std::{
     fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Stdout, Write},
     path::{Path, PathBuf},
     sync::LazyLock,
     time::SystemTime,
 };
 
 use config::{Config, ConfigError};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use directories::{BaseDirs, ProjectDirs, UserDirs};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
@@ -14,8 +17,13 @@ use jiff::{
     civil::{DateTime, datetime},
     tz::TimeZone,
 };
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    crossterm::event::{self, Event, KeyCode},
+};
+use ratatui_explorer::{File, FileExplorer};
 use regex::Regex;
-use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tracing::warn;
@@ -52,7 +60,8 @@ impl ESConfig {
         let (mut config, config_file_path) = setup_configuration().unwrap();
         let (sct_path, enor_file_prefix) = search_for_euroscope_newest_sct_file()
             .or_else(|| config.find_from_config())
-            .or_else(|| get_rfd_euroscope_config_folder(&mut config, &config_file_path))?;
+            .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
+
         Some(Self {
             euroscope_config_folder: sct_path,
             enor_file_prefix,
@@ -97,13 +106,14 @@ impl ESConfig {
     }
 }
 
-fn get_rfd_euroscope_config_folder<P: AsRef<Path>>(
+#[cfg(windows)]
+fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
 ) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new()?;
 
-    let possibility = FileDialog::new()
+    let possibility = rfd::FileDialog::new()
         .set_title("Select Euroscope sector file folder. The folder containing the ese file")
         .set_directory(bd.config_dir())
         .add_filter("Euroscope Configuration", &["sct", "rwy"])
@@ -114,6 +124,75 @@ fn get_rfd_euroscope_config_folder<P: AsRef<Path>>(
                 .expect("Failed to write config file");
         })?;
     search_for_ese_with_possibilities(&[possibility])
+}
+
+#[cfg(not(windows))]
+fn query_user_euroscope_config_folder<P: AsRef<Path>>(
+    config: &mut Configurable,
+    config_file_path: &P,
+) -> Option<(PathBuf, String)> {
+    fn pick_folder() -> io::Result<Option<PathBuf>> {
+        use crossterm::ExecutableCommand;
+
+        enable_raw_mode()?;
+        io::stdout().execute(EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal: Terminal<CrosstermBackend<Stdout>> = Terminal::new(backend)?;
+
+        let mut explorer = FileExplorer::new()?;
+        // Start in XDG config dir (or fall back to home) using `directories`
+        if let Some(bd) = BaseDirs::new() {
+            let start = bd.config_dir();
+            let _ = explorer.set_cwd(start);
+        }
+
+        let chosen = loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                f.render_widget(&explorer.widget(), area);
+            })?;
+
+            let event = event::read()?;
+            if let Event::Key(key) = &event
+                && key.code == KeyCode::Enter
+            {
+                let current: &File = explorer.current();
+                let path = if current.is_dir() {
+                    current.path().to_path_buf()
+                } else {
+                    current
+                        .path()
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("/"))
+                };
+                break Some(path);
+            }
+            let _ = explorer.handle(&event);
+        };
+
+        disable_raw_mode()?;
+        io::stdout().execute(LeaveAlternateScreen)?;
+        Ok(chosen)
+    }
+
+    let selected = match pick_folder() {
+        Ok(Some(p)) => p,
+        Ok(None) => return None,
+        Err(err) => {
+            eprintln!("Error in file explorer: {err}");
+            return None;
+        }
+    };
+
+    config.euroscope_config_folder = Some(selected.clone());
+    if let Ok(serialized) = toml::to_string_pretty(&config)
+        && let Err(e) = fs::write(config_file_path, serialized)
+    {
+        eprintln!("Failed to write config file: {e}");
+    }
+
+    search_for_ese_with_possibilities(&[selected])
 }
 
 #[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
