@@ -233,7 +233,7 @@ impl Airport {
                     // If crosswind is below 15 knots, we can use the main runway
                     return default_fallback;
                 }
-                let secondary_runway_index = !main_runway_index;
+                let secondary_runway_index = main_runway_index & 1;
                 let secondary_runway_crosswind = calculate_max_crosswind(
                     &self.runways[secondary_runway_index].runways[0],
                     &metar.wind,
