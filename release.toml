@@ -24,7 +24,7 @@ metadata = "optional"
 certs-source = "webpki"
 
 [unstable]
-workspace-publish = false
+workspace-publish = true
 
 [rate-limit]
 new-packages = 5

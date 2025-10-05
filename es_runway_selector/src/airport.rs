@@ -44,6 +44,8 @@ impl Airport {
         } else if self.runways.len() == 1 {
             self.internal_set_runway_based_on_metar_wind(0)
                 .ok_or(ApplicationError::NoRunwayToSet)
+        } else if self.icao == "ENVR" {
+            Ok(IndexMap::new())
         } else {
             unreachable!(
                 "Airport {} has multiple runways, but no specific logic implemented for it",

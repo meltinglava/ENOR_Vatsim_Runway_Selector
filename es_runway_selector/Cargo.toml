@@ -1,5 +1,5 @@
 [package]
-name = "vatsca_es_setup"
+name = "es_runway_selector"
 version.workspace = true
 authors.workspace = true
 description.workspace = true
