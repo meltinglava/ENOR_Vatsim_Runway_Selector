@@ -91,8 +91,10 @@ jobs:
           cargo build --release --target "$TARGET" --locked
 
       - name: Package (tar.gz)
+        shell: bash
         run: |
           mkdir -p dist
+          shopt -s nullglob
           files=(target/"${TARGET}"/release/*)
           if [ ${#files[@]} -eq 0 ]; then
             echo "Error: No files found in target/${TARGET}/release/"
