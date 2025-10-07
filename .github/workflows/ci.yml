@@ -78,7 +78,7 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            libxkbcommon-dev tar
+            libxkbcommon-dev tar bash
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
