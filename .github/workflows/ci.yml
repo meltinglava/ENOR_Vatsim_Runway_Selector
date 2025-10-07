@@ -100,8 +100,12 @@ jobs:
             echo "Error: No files found in target/${TARGET}/release/"
            exit 1
           fi
-          cp "${files[@]}" dist/
+          for file in "${files[@]}"; do
+          if [ -f "$file" ]; then
+            cp "$file" dist/
+          fi
           tar -C dist -czf "${{ github.event.repository.name }}-linux-musl.tar.gz" .
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
