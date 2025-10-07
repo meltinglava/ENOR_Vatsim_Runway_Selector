@@ -93,7 +93,6 @@ jobs:
       - name: Package (tar.gz)
         run: |
           mkdir -p dist
-          shopt -s nullglob
           files=(target/"${TARGET}"/release/*)
           if [ ${#files[@]} -eq 0 ]; then
             echo "Error: No files found in target/${TARGET}/release/"
@@ -138,12 +137,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $zip = "${{ github.event.repository.name }}-windows-msvc.zip"
           $exeFiles = Get-ChildItem -Path "target/release" -Filter *.exe | Select-Object -ExpandProperty FullName
-          $pdbFiles = Get-ChildItem -Path "target/release" -Filter *.pdb | Select-Object -ExpandProperty FullName
-          if ($pdbFiles) {
-            Compress-Archive -Path @($exeFiles + $pdbFiles) -DestinationPath $zip -Force
-          } else {
-            Compress-Archive -Path $exeFiles -DestinationPath $zip -Force
-          }
+          Compress-Archive -Path $exeFiles -DestinationPath $zip -Force
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
