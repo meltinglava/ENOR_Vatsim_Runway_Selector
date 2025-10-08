@@ -213,18 +213,33 @@ fn read_with_encoings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use metar_decoder::metar::Metar;
+
     use super::*;
 
     #[test]
-    fn make_test_airport() {
+    fn test_airport_gen() {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
         let config = ESConfig::new_for_test();
         ap.fill_known_airports(&mut reader, &config).unwrap();
-        assert_eq!(ap.airports.len(), 51);
+        assert_eq!(ap.airports.len(), 50);
     }
 
-    #[test]
-    fn test_name() {}
+    pub(crate) fn make_test_airport(metar_str: &str) -> Airport {
+        let icao = metar_str[0..4].to_string();
+        let mut ap = Airports::new();
+        let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
+        let config = ESConfig::new_for_test();
+        ap.fill_known_airports(&mut reader, &config).unwrap();
+        let airport = ap.airports.swap_remove(&icao).unwrap();
+        let metar: Metar = metar_decoder::metar::nom_parse_metar(metar_str).unwrap().1;
+        Airport {
+            icao: airport.icao,
+            metar: Some(metar),
+            runways: airport.runways,
+            runways_in_use: IndexMap::new(),
+        }
+    }
 }

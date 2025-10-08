@@ -31,7 +31,7 @@ pub async fn get_metars() -> ApplicationResult<Vec<Metar>> {
 pub fn calculate_max_crosswind(
     runway: &crate::runway::RunwayDirection,
     wind: &Wind,
-) -> Option<u32> {
+) -> Option<i32> {
     let track: u32 = runway.degrees as u32;
 
     let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) =
@@ -74,13 +74,12 @@ pub fn calculate_max_crosswind(
     scale_speed(wind.speed, factor)
 }
 
-pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<u32> {
+pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<i32> {
     let track = runway.degrees as u32;
-
     let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) =
         wind.varying
     {
-        let heads = [track % 360, (track + 180) % 360];
+        let heads = [track % 360];
         let (start, end) = (start % 360, end % 360);
         let includes = |a| {
             if start <= end {
@@ -95,19 +94,14 @@ pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Win
         } else {
             let s = f64::from(diff_angle(track, start));
             let e = f64::from(diff_angle(track, end));
-            s.to_radians().cos().max(e.to_radians().cos()).max(0.0)
+            s.to_radians().cos().max(e.to_radians().cos())
         }
     } else {
         match &wind.dir {
             metar_decoder::wind::WindDirection::Heading(wind_dir) => wind_dir
                 .0
                 .to_option()
-                .map(|wind_dir| {
-                    (diff_angle(track, wind_dir) as f64)
-                        .to_radians()
-                        .cos()
-                        .abs()
-                })
+                .map(|wind_dir| (diff_angle(track, wind_dir) as f64).to_radians().cos())
                 .unwrap_or(1.0),
             metar_decoder::wind::WindDirection::Variable => 1.0,
         }
@@ -116,10 +110,10 @@ pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Win
     scale_speed(wind.speed, factor)
 }
 
-fn scale_speed(speed: WindVelocity, factor: f64) -> Option<u32> {
+fn scale_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
     speed
         .get_max_wind_speed()
-        .map(|s| (f64::from(s) * factor).ceil() as u32)
+        .map(|s| (f64::from(s) * factor).ceil() as i32)
 }
 
 #[cfg(test)]
