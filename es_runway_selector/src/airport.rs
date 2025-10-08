@@ -264,15 +264,17 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_for_test() {
-        let ap = make_test_airport("ENHV 081620Z AUTO 08008KT 9999 OVC006/// 08/07 Q1001");
-        assert_eq!(ap.icao, "ENHV");
-        assert!(!ap.runways.is_empty());
+    fn test_for_airport(metar: &str, expected_runway: &str) {
+        let ap = make_test_airport(metar);
         let a = ap
             .set_runway_based_on_metar_wind(&ESConfig::new_for_test())
             .unwrap();
         assert_eq!(a.len(), 1);
-        assert_eq!(a.keys().next().unwrap(), "08");
+        assert_eq!(a.keys().next().unwrap(), expected_runway);
+    }
+
+    #[test]
+    fn test_for_enhv() {
+        test_for_airport("ENHV 081620Z AUTO 08008KT 9999 OVC006/// 08/07 Q1001", "08");
     }
 }
