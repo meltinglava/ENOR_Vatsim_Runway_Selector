@@ -7,7 +7,10 @@ ignore_airports = [
   "ENEG",
   "ENJA",
   "ENBM",
-  "ENAX"
+  "ENAX",
+  "ENAS",
+  "ENFG",
+  "ENTS",
 ]
 
 [default_runways]
