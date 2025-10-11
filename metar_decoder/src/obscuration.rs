@@ -306,7 +306,7 @@ fn nom_rvr(input: &str) -> nom::IResult<&str, Rvr> {
     .parse(input)
 }
 
-fn nom_vertical_visibility(input: &str) -> nom::IResult<&str, VerticalVisibility> {
+pub(crate) fn nom_vertical_visibility(input: &str) -> nom::IResult<&str, VerticalVisibility> {
     map(
         preceded(
             tag("VV"),

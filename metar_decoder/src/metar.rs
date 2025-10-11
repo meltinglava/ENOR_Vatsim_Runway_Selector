@@ -233,4 +233,10 @@ mod tests {
         let input = "ENBL 111220Z 25006KT 200V290 1000 R07/0600 FG DZ SCT005 BKN010 09/09 Q1024";
         Metar::from_str(input).unwrap();
     }
+
+    #[test]
+    fn test_parseble_3() {
+        let input = "ENZV 111920Z 30010KT 4000 -DZ BR VV007 13/12 Q1027 TEMPO 1200 DZ VV003";
+        Metar::from_str(input).unwrap();
+    }
 }
