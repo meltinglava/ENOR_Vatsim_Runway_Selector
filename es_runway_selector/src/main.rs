@@ -16,6 +16,7 @@ use error::ApplicationResult;
 use tracing::warn;
 
 #[derive(clap::Parser, Debug)]
+#[command(version, about, long_about = None)]
 struct Cli {
     #[clap(long, short)]
     clean_config: bool,
