@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use futures::future::try_join_all;
 use metar_decoder::{
     metar::Metar,
     optional_data::OptionalData,
@@ -11,11 +12,20 @@ use crate::{config::ESConfig, error::ApplicationResult, util::diff_angle};
 
 pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
     let ignore = conf.get_ignore_airports();
-    let values = reqwest::get("https://metar.vatsim.net/EN")
-        .await?
-        .text()
-        .await?
-        .lines()
+    let urls = [
+        "https://metar.vatsim.net/EN",
+        "https://metar.vatsim.net/ESKS",
+    ];
+
+    let pages =
+        try_join_all(urls.iter().map(async |&url| -> reqwest::Result<String> {
+            reqwest::get(url).await?.text().await
+        }))
+        .await?;
+
+    let values = pages
+        .iter()
+        .flat_map(|s| s.lines())
         .filter(|line| !ignore.contains(&line[0..4]))
         .map(Metar::from_str)
         .collect::<Result<Vec<_>, _>>()?;
