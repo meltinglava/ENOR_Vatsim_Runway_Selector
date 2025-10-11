@@ -213,4 +213,10 @@ mod tests {
                 }
             });
     }
+
+    #[test]
+    fn test_parseble() {
+        let input = "ENBR 111150Z 25006KT 9999 VCSH FEW005 SCT011 BKN014 12/10 Q1026 TEMPO SCT014 BKN020 RMK WIND 1200FT 27013KT";
+        Metar::from_str(input).unwrap();
+    }
 }

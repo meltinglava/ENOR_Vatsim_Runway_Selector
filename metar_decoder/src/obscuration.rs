@@ -174,7 +174,7 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
     .parse(input)
 }
 
-fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
+pub(crate) fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
     (
         alt((
             map(nom_statute_miles_visibility, VisibilityUnit::StatuteMiles),
@@ -275,7 +275,7 @@ fn nom_cloud_type(input: &str) -> nom::IResult<&str, OptionalData<String, 3>> {
     OptionalData::optional_field(map(alphanumeric1, |s: &str| s.to_string())).parse(input)
 }
 
-fn nom_cloud(input: &str) -> nom::IResult<&str, Cloud> {
+pub(crate) fn nom_cloud(input: &str) -> nom::IResult<&str, Cloud> {
     alt((
         value(Cloud::NCD, tag("NCD")),
         value(Cloud::NSC, tag("NSC")),
@@ -298,7 +298,7 @@ fn nom_cloud_data(input: &str) -> nom::IResult<&str, CloudData> {
     ))
 }
 
-fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeather> {
+pub(crate) fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeather> {
     map_res(
         (
             opt(alt((

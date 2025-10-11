@@ -1,22 +1,35 @@
-use nom::{Parser, character::complete::space0, combinator::opt, sequence::preceded};
+use nom::{Parser, character::complete::space0, combinator::opt, multi::many1, sequence::preceded};
 
 use crate::{
-    obscuration::{Obscuration, nom_obscuration},
+    obscuration::{
+        Cloud, PresentWeather, Visibility, nom_cloud, nom_present_weather, nom_visibility,
+    },
     wind::{Wind, nom_wind},
 };
 
 #[derive(Debug, Clone)]
 pub struct Trend {
     pub wind: Option<Wind>,
-    pub obscuration: Option<Obscuration>,
+    pub visibility: Option<Visibility>,
+    pub expected_present_weather: Option<Vec<PresentWeather>>,
+    pub cloud_layers: Option<Vec<Cloud>>,
     // TODO: Add more types that can come here.
 }
 
 pub(crate) fn nom_becoming(input: &str) -> nom::IResult<&str, Trend> {
     (
         opt(preceded(space0, nom_wind)),
-        opt(preceded(space0, nom_obscuration)),
+        opt(preceded(space0, nom_visibility)),
+        opt(many1(preceded(space0, nom_present_weather))),
+        opt(many1(preceded(space0, nom_cloud))),
     )
-        .map(|(wind, obscuration)| Trend { wind, obscuration })
+        .map(
+            |(wind, visibility, expected_present_weather, cloud_layers)| Trend {
+                wind,
+                visibility,
+                cloud_layers,
+                expected_present_weather,
+            },
+        )
         .parse(input)
 }
