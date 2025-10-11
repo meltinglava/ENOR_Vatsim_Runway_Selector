@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "es_runway_selector"
-version = "0.0.1-alpha.8"
+version = "0.0.1-alpha.9"
 dependencies = [
  "cargo-license",
  "config",
@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "metar_decoder"
-version = "0.0.1-alpha.8"
+version = "0.0.1-alpha.9"
 dependencies = [
  "itertools 0.14.0",
  "jiff",
