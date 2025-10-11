@@ -8,7 +8,8 @@ repository.workspace = true
 description = "Pacakge that parses metars into set structs"
 
 [dependencies]
-itertools = "0.14.0"
-jiff = { version = "0.2.15", features = ["serde", "logging"] }
-nom = "8.0.0"
+itertools = { workspace = true }
+jiff = { workspace = true }
+nom = { workspace = true }
 thiserror = "2.0.16"
+tracing = { workspace = true }

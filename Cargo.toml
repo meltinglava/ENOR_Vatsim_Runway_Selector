@@ -9,3 +9,10 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Package for automaticly selecting runways for Euroscope in Polaris area"
 repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
+
+[workspace.dependencies]
+nom = "8.0.0"
+itertools = "0.14.0"
+jiff = { version = "0.2.15", features = ["serde"] }
+tracing = { version = "0.1.41", features = ["valuable"] }
+tracing-unwrap = { version = "1.0.1", features = ["log-location"] }

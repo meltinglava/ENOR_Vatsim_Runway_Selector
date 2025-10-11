@@ -1,29 +1,23 @@
+use std::str::FromStr;
+
 use metar_decoder::{
-    metar::{Metar, nom_parse_metar},
+    metar::Metar,
     optional_data::OptionalData,
     units::{track::Track, velocity::WindVelocity},
     wind::Wind,
 };
-use nom::{Finish, IResult};
 
-use crate::{error::ApplicationResult, util::diff_angle};
+use crate::{config::ESConfig, error::ApplicationResult, util::diff_angle};
 
-pub async fn get_metars() -> ApplicationResult<Vec<Metar>> {
-    let ignore = ["ENSF"];
+pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
+    let ignore = conf.get_ignore_airports();
     let values = reqwest::get("https://metar.vatsim.net/EN")
         .await?
         .text()
         .await?
         .lines()
-        .filter(|line| {
-            let icao = line.split_whitespace().next().unwrap();
-            !ignore.contains(&icao)
-        })
-        .map(nom_parse_metar)
-        .map(IResult::finish)
-        .map(|result| result.map_err(|e| e.cloned()))
-        .map(|result| result.map(|(_, metar)| metar))
-        .filter(Result::is_ok) // TODO: handle errors
+        .filter(|line| !ignore.contains(&line[0..4]))
+        .map(Metar::from_str)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(values)
 }

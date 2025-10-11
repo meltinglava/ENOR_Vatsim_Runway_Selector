@@ -3,6 +3,7 @@ use encoding::{
     all::{ISO_8859_1, UTF_8},
 };
 use indexmap::{IndexMap, IndexSet};
+use tracing_unwrap::ResultExt;
 
 use std::{
     io::Read,
@@ -77,8 +78,8 @@ impl Airports {
         Ok(())
     }
 
-    pub async fn add_metars(&mut self) {
-        let metars = get_metars().await.unwrap();
+    pub async fn add_metars(&mut self, conf: &ESConfig) {
+        let metars = get_metars(conf).await.unwrap_or_log();
         for metar in metars {
             if let Some(airport) = self.airports.get_mut(&metar.icao) {
                 airport.metar = Some(metar);
@@ -234,7 +235,7 @@ pub(crate) mod tests {
         let config = ESConfig::new_for_test();
         ap.fill_known_airports(&mut reader, &config).unwrap();
         let airport = ap.airports.swap_remove(&icao).unwrap();
-        let metar: Metar = metar_decoder::metar::nom_parse_metar(metar_str).unwrap().1;
+        let metar: Metar = metar_str.parse().unwrap();
         Airport {
             icao: airport.icao,
             metar: Some(metar),

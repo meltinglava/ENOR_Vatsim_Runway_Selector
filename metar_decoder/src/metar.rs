@@ -14,6 +14,7 @@ use nom::{
     error::ParseError,
     sequence::preceded,
 };
+use tracing::warn;
 
 use crate::{
     obscuration::{Obscuration, PresentWeather, nom_obscuration, nom_recent_present_weather},
@@ -46,9 +47,13 @@ pub struct Metar {
 impl FromStr for Metar {
     type Err = nom::error::Error<String>;
 
+    #[tracing::instrument(name = "metar_parse")]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (rest, metar) = nom_parse_metar(s).finish()?;
+        let (rest, metar) = nom_parse_metar(s).finish().inspect_err(|e| {
+            warn!(?e);
+        })?;
         if !rest.is_empty() {
+            warn!(?rest, "Unparsed input remains");
             Err(nom::error::Error::new(
                 rest.to_string(),
                 nom::error::ErrorKind::NonEmpty,
@@ -60,16 +65,19 @@ impl FromStr for Metar {
 }
 
 #[allow(unused)]
-pub(crate) fn debug<P, I, O, E>(name: &'static str, mut f: P) -> impl FnMut(I) -> IResult<I, O, E>
+pub(crate) fn debug<P, I, O, E>(
+    name: &'static str,
+    mut parser: P,
+) -> impl FnMut(I) -> IResult<I, O, E>
 where
-    P: FnMut(I) -> IResult<I, O, E>,
+    P: Parser<I, Output = O, Error = E>,
     I: Clone + AsBytes + Debug,
     E: ParseError<I> + Debug,
     O: Debug,
 {
     move |input: I| {
         eprintln!("→ {name} | input: {}", preview(&input));
-        let res = f(input.clone());
+        let res = parser.parse(input.clone());
         match &res {
             Ok((rest, out)) => {
                 let in_len = input.as_bytes().len();
@@ -114,7 +122,7 @@ fn short_dbg<T: Debug>(t: &T) -> String {
     }
 }
 
-pub fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
+fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
     let (
         rest,
         (
@@ -215,8 +223,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parseble() {
+    fn test_parseble_1() {
         let input = "ENBR 111150Z 25006KT 9999 VCSH FEW005 SCT011 BKN014 12/10 Q1026 TEMPO SCT014 BKN020 RMK WIND 1200FT 27013KT";
+        Metar::from_str(input).unwrap();
+    }
+
+    #[test]
+    fn test_parseble_2() {
+        let input = "ENBL 111220Z 25006KT 200V290 1000 R07/0600 FG DZ SCT005 BKN010 09/09 Q1024";
         Metar::from_str(input).unwrap();
     }
 }

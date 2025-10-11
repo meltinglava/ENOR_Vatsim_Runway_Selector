@@ -11,6 +11,7 @@ ignore_airports = [
   "ENAS",
   "ENFG",
   "ENTS",
+  "ENQC",  # bad autometars
 ]
 
 [default_runways]

@@ -27,6 +27,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tracing::warn;
+use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
 use crate::{airports::Airports, error::ApplicationResult, runway::RunwayUse};
@@ -57,7 +58,7 @@ impl Configurable {
 
 impl ESConfig {
     pub fn find_euroscope_config_folder() -> Option<Self> {
-        let (mut config, config_file_path) = setup_configuration().unwrap();
+        let (mut config, config_file_path) = setup_configuration().unwrap_or_log();
         let (sct_path, enor_file_prefix) = search_for_euroscope_newest_sct_file()
             .or_else(|| config.find_from_config())
             .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
