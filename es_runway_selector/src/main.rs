@@ -19,6 +19,7 @@ use tracing::warn;
 #[command(version, about, long_about = None)]
 struct Cli {
     #[clap(long, short)]
+    /// Resets the config file (but keeps the es folder information)
     clean_config: bool,
 }
 
