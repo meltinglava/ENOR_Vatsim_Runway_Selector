@@ -22,9 +22,11 @@ pub enum Obscuration {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DescribedObscuration {
     pub visibility: Visibility,
+    pub direction_visibility: Option<Vec<Visibility>>,
     pub rvr: Vec<Rvr>,
     pub clouds: Vec<Cloud>,
     pub present_weather: Vec<PresentWeather>,
+    pub vertical_visibility: Option<VerticalVisibility>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -33,6 +35,10 @@ pub struct Rvr {
     pub value: OptionalData<u32, 4>,
     pub distance_modifier: Option<DistanceModifier>,
     pub comment: Option<Trend>,
+}
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct VerticalVisibility {
+    pub visibility: OptionalData<u32, 3>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -67,6 +73,7 @@ pub enum CloudCoverage {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Visibility {
     pub value: VisibilityUnit,
+    pub direction: Option<Direction>,
     pub ndv: bool,
 }
 
@@ -74,6 +81,18 @@ pub struct Visibility {
 pub enum VisibilityUnit {
     Meters(OptionalData<u32, 4>),
     StatuteMiles(StatuteMilesVisibility),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Direction {
+    N,
+    NE,
+    E,
+    SE,
+    S,
+    SW,
+    W,
+    NW,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -153,7 +172,7 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
             nom_visibility,
             preceded(
                 opt(complete::char(' ')),
-                separated_list0(complete::char(' '), nom_present_weather),
+                opt(separated_list1(complete::char(' '), nom_visibility)),
             ),
             preceded(
                 opt(complete::char(' ')),
@@ -161,14 +180,21 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
             ),
             preceded(
                 opt(complete::char(' ')),
+                separated_list0(complete::char(' '), nom_present_weather),
+            ),
+            preceded(
+                opt(complete::char(' ')),
                 separated_list0(complete::char(' '), nom_cloud),
             ),
+            preceded(opt(complete::char(' ')), opt(nom_vertical_visibility)),
         ),
-        |(visibility, present_weather, rvr, clouds)| DescribedObscuration {
+        |(visibility, dir, rvr, present_weather, clouds, vv)| DescribedObscuration {
             visibility,
+            direction_visibility: dir,
             rvr,
             present_weather,
             clouds,
+            vertical_visibility: vv,
         },
     )
     .parse(input)
@@ -184,9 +210,28 @@ pub(crate) fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
             ),
         )),
         opt(tag("NDV")).map(|ndv| ndv.is_some()),
+        opt(nom_direction),
     )
-        .map(|(value, ndv)| Visibility { value, ndv })
+        .map(|(value, ndv, dir)| Visibility {
+            value,
+            ndv,
+            direction: dir,
+        })
         .parse(input)
+}
+
+fn nom_direction(input: &str) -> nom::IResult<&str, Direction> {
+    alt((
+        value(Direction::SE, tag("SE")),
+        value(Direction::NE, tag("NE")),
+        value(Direction::NW, tag("NW")),
+        value(Direction::SW, tag("SW")),
+        value(Direction::N, tag("N")),
+        value(Direction::E, tag("E")),
+        value(Direction::S, tag("S")),
+        value(Direction::W, tag("W")),
+    ))
+    .parse(input)
 }
 
 fn nom_fraction(input: &str) -> nom::IResult<&str, (u32, u32)> {
@@ -257,6 +302,17 @@ fn nom_rvr(input: &str) -> nom::IResult<&str, Rvr> {
             distance_modifier,
             comment,
         },
+    )
+    .parse(input)
+}
+
+fn nom_vertical_visibility(input: &str) -> nom::IResult<&str, VerticalVisibility> {
+    map(
+        preceded(
+            tag("VV"),
+            OptionalData::optional_field(map_parser(take(3usize), all_consuming(u32))),
+        ),
+        |visibility| VerticalVisibility { visibility },
     )
     .parse(input)
 }
@@ -383,8 +439,10 @@ mod tests {
         let expected = DescribedObscuration {
             visibility: Visibility {
                 value: VisibilityUnit::Meters(OptionalData::Data(9999)),
+                direction: None,
                 ndv: false,
             },
+            direction_visibility: None,
             rvr: vec![],
             clouds: vec![Cloud::CloudData(CloudData {
                 coverage: OptionalData::Data(CloudCoverage::Overcast),
@@ -392,6 +450,7 @@ mod tests {
                 cloud_type: Some(OptionalData::Undefined),
             })],
             present_weather: vec![],
+            vertical_visibility: None,
         };
         assert_eq!(nom_described_obscuration(input), Ok(("", expected)));
     }
