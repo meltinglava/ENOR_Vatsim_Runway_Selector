@@ -10,14 +10,22 @@ pub(crate) mod util;
 use std::fs::File;
 
 use airports::Airports;
+use clap::Parser;
 use config::ESConfig;
 use error::ApplicationResult;
 use tracing::warn;
 
+#[derive(clap::Parser, Debug)]
+struct Cli {
+    #[clap(long, short)]
+    clean_config: bool,
+}
+
 #[tokio::main]
 async fn main() -> ApplicationResult<()> {
     tracing_subscriber::fmt::init();
-    let config = ESConfig::find_euroscope_config_folder().unwrap();
+    let cli = Cli::parse();
+    let config = ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap();
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
     airports.fill_known_airports(&mut sct_file, &config)?;

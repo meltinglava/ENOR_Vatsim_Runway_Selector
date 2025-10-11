@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::{self, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Stdout, Write},
     path::{Path, PathBuf},
@@ -57,8 +58,8 @@ impl Configurable {
 }
 
 impl ESConfig {
-    pub fn find_euroscope_config_folder() -> Option<Self> {
-        let (mut config, config_file_path) = setup_configuration().unwrap_or_log();
+    pub fn find_euroscope_config_folder(clean_config: bool) -> Option<Self> {
+        let (mut config, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
         let (sct_path, enor_file_prefix) = search_for_euroscope_newest_sct_file()
             .or_else(|| config.find_from_config())
             .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
@@ -210,16 +211,17 @@ pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
         .collect::<io::Result<String>>()
 }
 
-fn setup_configuration() -> Result<(Configurable, PathBuf), ConfigError> {
+fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), ConfigError> {
     let config_dir = ProjectDirs::from("", "meltinglava", "vatsca_es_setup")
         .expect("Failed to get project directories")
         .config_dir()
         .to_path_buf();
 
+    let mut raw_config_file = Cow::Borrowed(include_str!("../config.toml"));
     let config_file = config_dir.join("config.toml");
     if !config_file.exists() {
         std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
-        std::fs::write(&config_file, include_str!("../config.toml"))
+        std::fs::write(&config_file, raw_config_file.as_bytes())
             .expect("Failed to create config file");
     }
     let configurable = Config::builder()
@@ -227,7 +229,21 @@ fn setup_configuration() -> Result<(Configurable, PathBuf), ConfigError> {
         .build()
         .expect("Failed to build configuration")
         .try_deserialize::<Configurable>()?;
-    Ok((configurable, config_file))
+    if clean_config {
+        if let Some(path) = &configurable.euroscope_config_folder {
+            raw_config_file = format!(
+                "euroscope_config_folder = '{}'\n\n{}",
+                path.to_string_lossy(),
+                raw_config_file
+            )
+            .into();
+        }
+        fs::write(&config_file, raw_config_file.as_bytes())
+            .expect("Failed to write cleaned config file");
+        self::setup_configuration(false)
+    } else {
+        Ok((configurable, config_file))
+    }
 }
 
 fn write_runway_file<T: Write>(
