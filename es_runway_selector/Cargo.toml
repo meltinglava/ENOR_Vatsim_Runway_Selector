@@ -20,7 +20,6 @@ itertools = { workspace = true }
 jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
 nom = { workspace = true }
-once_cell = "1.21.3"
 ratatui = "0.29.0"
 ratatui-explorer = "0.2.1"
 regex = "1.11.3"

@@ -1092,7 +1092,6 @@ dependencies = [
  "jiff",
  "metar_decoder",
  "nom",
- "once_cell",
  "ratatui",
  "ratatui-explorer",
  "regex",

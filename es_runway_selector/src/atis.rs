@@ -1,17 +1,19 @@
 use indexmap::IndexMap;
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::runway::RunwayUse;
 
 pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
-    static SINGLE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"RUNWAY IN USE ([0-9]{2}[LRC]*)").unwrap());
-    static ARR: Lazy<Regex> = Lazy::new(|| Regex::new(r"APPROACH RWY ([0-9]{2}[LRC]*)").unwrap());
-    static DEP: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"DEPARTURE RUNWAY ([0-9]{2}[LRC]*)").unwrap());
-    static MULTI: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"RUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE").unwrap());
+    static SINGLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"RUNWAY IN USE ([0-9]{2}[LRC]*)").unwrap());
+    static ARR: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"APPROACH RWY ([0-9]{2}[LRC]*)").unwrap());
+    static DEP: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"DEPARTURE RUNWAY ([0-9]{2}[LRC]*)").unwrap());
+    static MULTI: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"RUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE").unwrap()
+    });
 
     let mut runways = IndexMap::new();
 
