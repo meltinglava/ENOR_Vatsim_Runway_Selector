@@ -39,3 +39,6 @@ whoami = "1.6.1"
 
 [target.'cfg(windows)'.dependencies]
 rfd = "0.15.4"
+
+[dev-dependencies]
+tracing-test = { workspace = true }

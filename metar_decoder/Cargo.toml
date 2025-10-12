@@ -13,3 +13,6 @@ jiff = { workspace = true }
 nom = { workspace = true }
 thiserror = "2.0.16"
 tracing = { workspace = true }
+
+[dev-dependencies]
+tracing-test = { workspace = true }

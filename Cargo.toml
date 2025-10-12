@@ -16,3 +16,4 @@ itertools = "0.14.0"
 jiff = { version = "0.2.15", features = ["serde"] }
 tracing = { version = "0.1.41", features = ["valuable"] }
 tracing-unwrap = { version = "1.0.1", features = ["log-location"] }
+tracing-test = "0.2.5"

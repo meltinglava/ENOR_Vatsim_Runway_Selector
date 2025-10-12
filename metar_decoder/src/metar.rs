@@ -200,8 +200,10 @@ fn parse_metars<R: Read>(input: R) -> Result<Vec<(String, Metar)>, nom::error::E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_test::traced_test;
 
     #[test]
+    #[traced_test]
     fn test_parse() {
         let input = include_str!("../test.metars");
         input
@@ -223,18 +225,21 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
     fn test_parseble_1() {
         let input = "ENBR 111150Z 25006KT 9999 VCSH FEW005 SCT011 BKN014 12/10 Q1026 TEMPO SCT014 BKN020 RMK WIND 1200FT 27013KT";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
+    #[traced_test]
     fn test_parseble_2() {
         let input = "ENBL 111220Z 25006KT 200V290 1000 R07/0600 FG DZ SCT005 BKN010 09/09 Q1024";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
+    #[traced_test]
     fn test_parseble_3() {
         let input = "ENZV 111920Z 30010KT 4000 -DZ BR VV007 13/12 Q1027 TEMPO 1200 DZ VV003";
         Metar::from_str(input).unwrap();
