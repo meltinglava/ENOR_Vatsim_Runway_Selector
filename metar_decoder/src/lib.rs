@@ -1,4 +1,5 @@
 pub mod metar;
+pub mod nato_mil_code;
 pub mod obscuration;
 pub mod optional_data;
 pub mod pressure;

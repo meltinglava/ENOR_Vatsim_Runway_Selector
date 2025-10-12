@@ -25,7 +25,7 @@ pub struct DescribedObscuration {
     pub direction_visibility: Option<Vec<Visibility>>,
     pub rvr: Vec<Rvr>,
     pub clouds: Vec<Cloud>,
-    pub present_weather: Vec<PresentWeather>,
+    pub present_weather: OptionalData<Vec<PresentWeather>, 2>,
     pub vertical_visibility: Option<VerticalVisibility>,
 }
 
@@ -112,7 +112,7 @@ pub enum DistanceModifier {
 pub struct PresentWeather {
     pub intensity: Option<WeatherIntensity>,
     pub descriptor: Option<Qualifier>,
-    pub phenomena: Vec<WeatherPhenomenon>,
+    pub phenomena: Vec<OptionalData<WeatherPhenomenon, 2>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -180,7 +180,10 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
             ),
             preceded(
                 opt(complete::char(' ')),
-                separated_list0(complete::char(' '), nom_present_weather),
+                OptionalData::optional_field(separated_list0(
+                    complete::char(' '),
+                    nom_present_weather,
+                )),
             ),
             preceded(
                 opt(complete::char(' ')),
@@ -372,7 +375,7 @@ pub(crate) fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeat
                 value(Qualifier::Thunderstorm, tag("TS")),
                 value(Qualifier::Freezing, tag("FZ")),
             ))),
-            many0(alt((
+            many0(OptionalData::optional_field(alt((
                 value(WeatherPhenomenon::DZ, tag("DZ")),
                 value(WeatherPhenomenon::RA, tag("RA")),
                 value(WeatherPhenomenon::SN, tag("SN")),
@@ -393,7 +396,7 @@ pub(crate) fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeat
                 value(WeatherPhenomenon::FC, tag("FC")),
                 value(WeatherPhenomenon::SS, tag("SS")),
                 value(WeatherPhenomenon::DS, tag("DS")),
-            ))),
+            )))),
         ),
         |(intensity, descriptor, phenomena)| {
             if descriptor.is_none() && phenomena.is_empty() {
@@ -449,7 +452,7 @@ mod tests {
                 height: OptionalData::Data(CloudHeight { height: 18 }),
                 cloud_type: Some(OptionalData::Undefined),
             })],
-            present_weather: vec![],
+            present_weather: OptionalData::Data(vec![]),
             vertical_visibility: None,
         };
         assert_eq!(nom_described_obscuration(input), Ok(("", expected)));

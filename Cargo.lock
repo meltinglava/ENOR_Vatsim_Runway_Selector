@@ -1901,6 +1901,8 @@ dependencies = [
  "itertools 0.14.0",
  "jiff",
  "nom",
+ "serde",
+ "serde_json",
  "thiserror",
  "tracing",
  "tracing-test",

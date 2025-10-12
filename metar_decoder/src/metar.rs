@@ -17,7 +17,9 @@ use nom::{
 use tracing::warn;
 
 use crate::{
+    nato_mil_code::{NatoMilCode, nom_nato_mil_code},
     obscuration::{Obscuration, PresentWeather, nom_obscuration, nom_recent_present_weather},
+    optional_data::OptionalData,
     pressure::{Pressure, nom_pressure},
     sea_surface_indicator::{SeaSurfaceIndicator, nom_sea_surface_indicator},
     temprature::{TempratureInfo, nom_temprature_info},
@@ -31,6 +33,7 @@ pub struct Metar {
     pub raw: String,
     pub icao: String,
     pub timestamp: Timestamp,
+    pub corrected: bool,
     pub auto: bool,
     pub wind: Wind,
     pub obscuration: Obscuration,
@@ -41,6 +44,7 @@ pub struct Metar {
     pub sea_surface_indicator: Option<SeaSurfaceIndicator>,
     pub tempo: Option<Trend>,
     pub becoming: Option<Trend>,
+    pub nato_mil_code: Option<OptionalData<NatoMilCode, 3>>,
     pub remarks: Option<String>,
 }
 
@@ -128,11 +132,13 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
         (
             icao,
             timestamp,
+            corrected,
             auto,
             wind,
             (obscuration, pressure, temprature),
             recent_weather,
             sea_surface_indicator,
+            nato_mil_code,
             nosig,
             becoming,
             tempo,
@@ -141,6 +147,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
     ) = (
         nom::bytes::complete::take(4usize),
         preceded(char(' '), nom_metar_timestamp),
+        opt(tag(" COR")),
         opt(tag(" AUTO")),
         preceded(char(' '), nom_wind),
         permutation((
@@ -150,6 +157,10 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
         )),
         preceded(space0, opt(nom_recent_present_weather)),
         preceded(space0, opt(nom_sea_surface_indicator)),
+        opt(preceded(
+            space0,
+            OptionalData::optional_field(nom_nato_mil_code),
+        )),
         opt(preceded(space0, tag("NOSIG"))),
         opt(preceded((space0, tag("BECMG")), nom_becoming)),
         opt(preceded((space0, tag("TEMPO")), nom_becoming)),
@@ -168,6 +179,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
             raw: input.to_string(),
             icao: icao.to_string(),
             timestamp,
+            corrected: corrected.is_some(),
             auto: auto.is_some(),
             wind,
             obscuration,
@@ -178,6 +190,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
             sea_surface_indicator,
             becoming,
             tempo,
+            nato_mil_code,
             remarks: remark.map(str::to_string),
         },
     ))
@@ -250,5 +263,20 @@ mod tests {
     fn test_parseble_4() {
         let input = "ENBR 120520Z 32007KT 3500 DZ VV005 11/11 Q1026 TEMPO 9999 NSW SCT008 BKN015 RMK WIND 1200FT 33014KT";
         Metar::from_str(input).unwrap();
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_found_bad_metars() {
+        let path = std::path::Path::new("../failed_metars.json");
+        let rdr = std::fs::File::open(path).unwrap();
+        let metars: Vec<String> = serde_json::from_reader(rdr).unwrap();
+        let mut fail_found = false;
+        for m in metars {
+            if let Err(e) = Metar::from_str(&m) {
+                fail_found = true;
+            }
+        }
+        assert!(!fail_found, "Fails to parse metars");
     }
 }
