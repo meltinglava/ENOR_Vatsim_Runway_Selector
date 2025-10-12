@@ -244,4 +244,11 @@ mod tests {
         let input = "ENZV 111920Z 30010KT 4000 -DZ BR VV007 13/12 Q1027 TEMPO 1200 DZ VV003";
         Metar::from_str(input).unwrap();
     }
+
+    #[test]
+    #[traced_test]
+    fn test_parseble_4() {
+        let input = "ENBR 120520Z 32007KT 3500 DZ VV005 11/11 Q1026 TEMPO 9999 NSW SCT008 BKN015 RMK WIND 1200FT 33014KT";
+        Metar::from_str(input).unwrap();
+    }
 }
