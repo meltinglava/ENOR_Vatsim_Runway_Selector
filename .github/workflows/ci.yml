@@ -57,7 +57,7 @@ jobs:
           TARGET: x86_64-unknown-linux-musl
         run: |
           rustup target add "$TARGET" || true
-          cargo build --target "$TARGET" --locked
+          cargo build --target "$TARGET" --locked --bin es_runway_selector
 
   # ---------- Linux (musl) build on tag, in Alpine ----------
   release_linux_musl:
@@ -88,7 +88,7 @@ jobs:
       - name: Build (release, musl)
         run: |
           rustup target add "$TARGET" || true
-          cargo build --release --target "$TARGET" --locked
+          cargo build --release --target "$TARGET" --locked --bin es_runway_selector
 
       - name: Package (tar.gz)
         shell: bash
@@ -135,7 +135,7 @@ jobs:
           cache-on-failure: true
 
       - name: Build (release)
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin es_runway_selector
 
       - name: Package (zip)
         shell: pwsh

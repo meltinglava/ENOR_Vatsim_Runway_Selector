@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["es_runway_selector", "metar_decoder"]
+members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job"]
 
 [workspace.package]
 authors = ["meltinglava"]
@@ -11,10 +11,11 @@ description = "Package for automaticly selecting runways for Euroscope in Polari
 repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
 
 [workspace.dependencies]
-nom = "8.0.0"
+futures = { version = "0.3.31", default-features = false }
 indexmap = { version = "2.11.4", features = ["serde"] }
 itertools = "0.14.0"
 jiff = { version = "0.2.15", features = ["serde"] }
+nom = "8.0.0"
 reqwest = { version = "0.12", features = ["charset", "http2", "json", "rustls-tls"], default-features = false }
 serde = { version = "1.0.227", features = ["derive"] }
 serde_json = { version = "1.0.145", features = ["indexmap", "preserve_order"] }
