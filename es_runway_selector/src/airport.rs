@@ -125,7 +125,7 @@ impl Airport {
                 .iter()
                 .filter_map(|cloud| match cloud {
                     Cloud::CloudData(cloud_data) => Some(cloud_data),
-                    Cloud::NCD | Cloud::NSC => None,
+                    Cloud::NCD | Cloud::NSC | Cloud::CLR => None,
                 })
                 .filter(|cloud| {
                     if let OptionalData::Data(coverage) = &cloud.coverage {

@@ -52,6 +52,7 @@ pub enum Trend {
 pub enum Cloud {
     NCD, // No cloud detected
     NSC, // No significant clouds
+    CLR, // Clear
     CloudData(CloudData),
 }
 
@@ -338,6 +339,7 @@ pub(crate) fn nom_cloud(input: &str) -> nom::IResult<&str, Cloud> {
     alt((
         value(Cloud::NCD, tag("NCD")),
         value(Cloud::NSC, tag("NSC")),
+        value(Cloud::CLR, tag("CLR")),
         map(nom_cloud_data, Cloud::CloudData),
     ))
     .parse(input)
