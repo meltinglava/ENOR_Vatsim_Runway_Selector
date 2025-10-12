@@ -1,0 +1,19 @@
+[package]
+name = "find_bad_metar_job"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pacakge that runs metars and adds failing parsed metars to a list."
+
+[dependencies]
+indexmap = { workspace = true }
+itertools = { workspace = true }
+metar_decoder = { path = "../metar_decoder" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }

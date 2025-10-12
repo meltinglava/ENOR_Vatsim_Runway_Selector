@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["es_runway_selector", "metar_decoder"]
+members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job"]
 
 [workspace.package]
 authors = ["meltinglava"]
