@@ -267,13 +267,21 @@ mod tests {
 
     #[test]
     #[traced_test]
+    #[tracing::instrument(name = "EGWC 121350Z AUTO 05002KT //// ///////// ///// Q////")]
+    fn test_parseble_5() {
+        let input = "EGWC 121350Z AUTO 05002KT //// ///////// ///// Q////";
+        Metar::from_str(input).unwrap();
+    }
+
+    #[test]
+    #[traced_test]
     fn test_found_bad_metars() {
         let path = std::path::Path::new("../failed_metars.json");
         let rdr = std::fs::File::open(path).unwrap();
         let metars: Vec<String> = serde_json::from_reader(rdr).unwrap();
         let mut fail_found = false;
         for m in metars {
-            if let Err(e) = Metar::from_str(&m) {
+            if let Err(_e) = Metar::from_str(&m) {
                 fail_found = true;
             }
         }

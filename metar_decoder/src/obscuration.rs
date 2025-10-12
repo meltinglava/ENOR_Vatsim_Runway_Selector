@@ -2,8 +2,8 @@ use nom::{
     Parser,
     branch::alt,
     bytes::complete::{tag, take},
-    character::complete::{self, alphanumeric1, u32},
-    combinator::{all_consuming, map, map_parser, map_res, opt, value},
+    character::complete::{self, alphanumeric1, space1, u32},
+    combinator::{all_consuming, map, map_parser, map_res, not, opt, peek, value},
     multi::{many0, separated_list0, separated_list1},
     sequence::{preceded, separated_pair, terminated},
 };
@@ -25,7 +25,7 @@ pub struct DescribedObscuration {
     pub direction_visibility: Option<Vec<Visibility>>,
     pub rvr: Vec<Rvr>,
     pub clouds: Vec<Cloud>,
-    pub present_weather: OptionalData<Vec<PresentWeather>, 2>,
+    pub present_weather: Vec<PresentWeather>,
     pub vertical_visibility: Option<VerticalVisibility>,
 }
 
@@ -180,10 +180,7 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
             ),
             preceded(
                 opt(complete::char(' ')),
-                OptionalData::optional_field(separated_list0(
-                    complete::char(' '),
-                    nom_present_weather,
-                )),
+                separated_list0(complete::char(' '), nom_present_weather),
             ),
             preceded(
                 opt(complete::char(' ')),
@@ -204,23 +201,26 @@ fn nom_described_obscuration(input: &str) -> nom::IResult<&str, DescribedObscura
 }
 
 pub(crate) fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
-    (
-        alt((
-            map(nom_statute_miles_visibility, VisibilityUnit::StatuteMiles),
-            map(
-                OptionalData::optional_field(map_parser(take(4usize), all_consuming(u32))),
-                VisibilityUnit::Meters,
-            ),
-        )),
-        opt(tag("NDV")).map(|ndv| ndv.is_some()),
-        opt(nom_direction),
+    terminated(
+        (
+            alt((
+                map(nom_statute_miles_visibility, VisibilityUnit::StatuteMiles),
+                map(
+                    OptionalData::optional_field(map_parser(take(4usize), all_consuming(u32))),
+                    VisibilityUnit::Meters,
+                ),
+            )),
+            opt(tag("NDV")).map(|ndv| ndv.is_some()),
+            opt(nom_direction),
+        ),
+        peek(space1),
     )
-        .map(|(value, ndv, dir)| Visibility {
-            value,
-            ndv,
-            direction: dir,
-        })
-        .parse(input)
+    .map(|(value, ndv, dir)| Visibility {
+        value,
+        ndv,
+        direction: dir,
+    })
+    .parse(input)
 }
 
 fn nom_direction(input: &str) -> nom::IResult<&str, Direction> {
@@ -375,28 +375,32 @@ pub(crate) fn nom_present_weather(input: &str) -> nom::IResult<&str, PresentWeat
                 value(Qualifier::Thunderstorm, tag("TS")),
                 value(Qualifier::Freezing, tag("FZ")),
             ))),
-            many0(OptionalData::optional_field(alt((
-                value(WeatherPhenomenon::DZ, tag("DZ")),
-                value(WeatherPhenomenon::RA, tag("RA")),
-                value(WeatherPhenomenon::SN, tag("SN")),
-                value(WeatherPhenomenon::SG, tag("SG")),
-                value(WeatherPhenomenon::PL, tag("PL")),
-                value(WeatherPhenomenon::GR, tag("GR")),
-                value(WeatherPhenomenon::GS, tag("GS")),
-                value(WeatherPhenomenon::UP, tag("UP")),
-                value(WeatherPhenomenon::BR, tag("BR")),
-                value(WeatherPhenomenon::FG, tag("FG")),
-                value(WeatherPhenomenon::FU, tag("FU")),
-                value(WeatherPhenomenon::VA, tag("VA")),
-                value(WeatherPhenomenon::DU, tag("DU")),
-                value(WeatherPhenomenon::SA, tag("SA")),
-                value(WeatherPhenomenon::HZ, tag("HZ")),
-                value(WeatherPhenomenon::PO, tag("PO")),
-                value(WeatherPhenomenon::SQ, tag("SQ")),
-                value(WeatherPhenomenon::FC, tag("FC")),
-                value(WeatherPhenomenon::SS, tag("SS")),
-                value(WeatherPhenomenon::DS, tag("DS")),
-            )))),
+            many0(terminated(
+                alt((
+                    value(OptionalData::Data(WeatherPhenomenon::DZ), tag("DZ")),
+                    value(OptionalData::Data(WeatherPhenomenon::RA), tag("RA")),
+                    value(OptionalData::Data(WeatherPhenomenon::SN), tag("SN")),
+                    value(OptionalData::Data(WeatherPhenomenon::SG), tag("SG")),
+                    value(OptionalData::Data(WeatherPhenomenon::PL), tag("PL")),
+                    value(OptionalData::Data(WeatherPhenomenon::GR), tag("GR")),
+                    value(OptionalData::Data(WeatherPhenomenon::GS), tag("GS")),
+                    value(OptionalData::Data(WeatherPhenomenon::UP), tag("UP")),
+                    value(OptionalData::Data(WeatherPhenomenon::BR), tag("BR")),
+                    value(OptionalData::Data(WeatherPhenomenon::FG), tag("FG")),
+                    value(OptionalData::Data(WeatherPhenomenon::FU), tag("FU")),
+                    value(OptionalData::Data(WeatherPhenomenon::VA), tag("VA")),
+                    value(OptionalData::Data(WeatherPhenomenon::DU), tag("DU")),
+                    value(OptionalData::Data(WeatherPhenomenon::SA), tag("SA")),
+                    value(OptionalData::Data(WeatherPhenomenon::HZ), tag("HZ")),
+                    value(OptionalData::Data(WeatherPhenomenon::PO), tag("PO")),
+                    value(OptionalData::Data(WeatherPhenomenon::SQ), tag("SQ")),
+                    value(OptionalData::Data(WeatherPhenomenon::FC), tag("FC")),
+                    value(OptionalData::Data(WeatherPhenomenon::SS), tag("SS")),
+                    value(OptionalData::Data(WeatherPhenomenon::DS), tag("DS")),
+                    value(OptionalData::Undefined, tag("//")),
+                )),
+                peek(not(complete::char('/'))),
+            )),
         ),
         |(intensity, descriptor, phenomena)| {
             if descriptor.is_none() && phenomena.is_empty() {
@@ -452,9 +456,20 @@ mod tests {
                 height: OptionalData::Data(CloudHeight { height: 18 }),
                 cloud_type: Some(OptionalData::Undefined),
             })],
-            present_weather: OptionalData::Data(vec![]),
+            present_weather: vec![],
             vertical_visibility: None,
         };
         assert_eq!(nom_described_obscuration(input), Ok(("", expected)));
+    }
+
+    #[test]
+    fn test_present_weather_unknown() {
+        let input = "//";
+        let expected = PresentWeather {
+            intensity: None,
+            descriptor: None,
+            phenomena: vec![OptionalData::Undefined],
+        };
+        assert_eq!(nom_present_weather(input), Ok(("", expected)));
     }
 }
