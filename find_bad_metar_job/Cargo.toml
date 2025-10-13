@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Pacakge that runs metars and adds failing parsed metars to a list."
 
 [dependencies]
+futures = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }

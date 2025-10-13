@@ -1,14 +1,17 @@
 use std::{fs::File, path::Path, str::FromStr, sync::LazyLock};
 
+use futures::future::try_join_all;
 use indexmap::IndexSet;
 use metar_decoder::metar::Metar;
 
 async fn get_metars_text() -> reqwest::Result<String> {
-    let response = reqwest::get("https://metar.vatsim.net/E")
-        .await?
-        .text()
+    let urls = ["https://metar.vatsim.net/E", "https://metar.vatsim.net/L"];
+    let pages =
+        try_join_all(urls.iter().map(async |&url| -> reqwest::Result<String> {
+            reqwest::get(url).await?.text().await
+        }))
         .await?;
-    Ok(response)
+    Ok(pages.join("\n"))
 }
 
 fn get_already_failed_metars(path: &Path) -> IndexSet<String> {

@@ -1147,8 +1147,9 @@ checksum = "0399f9d26e5191ce32c498bebd31e7a3ceabc2745f0ac54af3f335126c3f24b3"
 
 [[package]]
 name = "find_bad_metar_job"
-version = "0.0.1-alpha.12"
+version = "0.0.1-alpha.13"
 dependencies = [
+ "futures",
  "indexmap 2.11.4",
  "itertools 0.14.0",
  "metar_decoder",
