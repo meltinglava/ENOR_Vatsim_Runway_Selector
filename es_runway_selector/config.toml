@@ -12,6 +12,7 @@ ignore_airports = [
   "ENFG",
   "ENTS",
   "ENQC",  # bad autometars
+  "ENOA",  # writes qnh without Q in metar
 ]
 
 [default_runways]
