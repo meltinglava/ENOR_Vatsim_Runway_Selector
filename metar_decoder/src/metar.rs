@@ -135,7 +135,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
             corrected,
             auto,
             wind,
-            (obscuration, pressure, temprature),
+            (obscuration, temprature, pressure),
             recent_weather,
             sea_surface_indicator,
             nato_mil_code,
@@ -152,8 +152,8 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
         preceded(char(' '), nom_wind),
         permutation((
             preceded(char(' '), nom_obscuration),
-            preceded(char(' '), nom_pressure),
             preceded(opt(char(' ')), nom_temprature_info),
+            preceded(char(' '), nom_pressure),
         )),
         preceded(space0, opt(nom_recent_present_weather)),
         preceded(space0, opt(nom_sea_surface_indicator)),
@@ -274,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "only used for testing localy"]
     #[traced_test]
     fn test_found_bad_metars() {
         let path = std::path::Path::new("../failed_metars.json");
