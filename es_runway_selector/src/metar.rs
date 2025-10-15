@@ -28,7 +28,8 @@ pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
         .flat_map(|s| s.lines())
         .filter(|line| !ignore.contains(&line[0..4]))
         .map(Metar::from_str)
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(Result::ok)
+        .collect();
     Ok(values)
 }
 
