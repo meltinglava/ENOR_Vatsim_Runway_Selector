@@ -57,7 +57,7 @@ jobs:
           TARGET: x86_64-unknown-linux-musl
         run: |
           rustup target add "$TARGET" || true
-          cargo build -- --target "$TARGET" --locked --bin es_runway_selector
+          cargo build --target "$TARGET" --locked --bin es_runway_selector
 
   # ---------- Linux (musl) build on tag, in Alpine ----------
   release_linux_musl:
