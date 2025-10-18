@@ -5,8 +5,8 @@ use indexmap::IndexSet;
 use metar_decoder::metar::Metar;
 
 async fn get_metars_text() -> reqwest::Result<String> {
-    // let urls = ["https://metar.vatsim.net/E", "https://metar.vatsim.net/L"];
-    let urls = ["https://metar.vatsim.net/*"];
+    let urls = ["https://metar.vatsim.net/E", "https://metar.vatsim.net/L"];
+    // let urls = ["https://metar.vatsim.net/*"];
     let pages =
         try_join_all(urls.iter().map(async |&url| -> reqwest::Result<String> {
             reqwest::get(url).await?.text().await
