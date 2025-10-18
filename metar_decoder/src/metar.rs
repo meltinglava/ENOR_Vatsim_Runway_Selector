@@ -52,7 +52,10 @@ impl FromStr for Metar {
     type Err = nom::error::Error<String>;
 
     #[tracing::instrument(name = "metar_parse")]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
+        s = s.trim();
+        s = s.trim_end_matches(" RMK"); // Military airprorts in Switzerland sometimes end with RMK but have no remarks.
+        s = s.trim_end_matches('='); // Nonsense = at the end
         let (rest, metar) = nom_parse_metar(s).finish().inspect_err(|e| {
             warn!(?e);
         })?;
