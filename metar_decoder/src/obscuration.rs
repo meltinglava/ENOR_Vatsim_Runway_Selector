@@ -2,7 +2,7 @@ use nom::{
     Parser,
     branch::alt,
     bytes::complete::{tag, take},
-    character::complete::{self, alphanumeric1, space1, u32},
+    character::complete::{self, alpha1, alphanumeric1, u32},
     combinator::{all_consuming, map, map_parser, map_res, not, opt, peek, value},
     multi::{many0, separated_list0, separated_list1},
     sequence::{preceded, separated_pair, terminated},
@@ -214,7 +214,7 @@ pub(crate) fn nom_visibility(input: &str) -> nom::IResult<&str, Visibility> {
             opt(tag("NDV")).map(|ndv| ndv.is_some()),
             opt(nom_direction),
         ),
-        peek(space1),
+        peek(not(alt((alpha1, tag("/"))))),
     )
     .map(|(value, ndv, dir)| Visibility {
         value,
