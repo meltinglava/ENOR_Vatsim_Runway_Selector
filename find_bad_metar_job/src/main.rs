@@ -30,16 +30,18 @@ fn write_failed_metars(path: &Path, failed: &IndexSet<String>) {
 fn find_fail_parsed_metars(metars: &str, path: &Path) {
     static IGNORE_AIRPORTS: LazyLock<IndexSet<&str>> = LazyLock::new(|| IndexSet::from(["EQYS"]));
 
-    let mut failed = get_already_failed_metars(path);
-    for line in metars.lines() {
+    let mut failed = IndexSet::new();
+    let mut to_test = get_already_failed_metars(path);
+    to_test.extend(metars.lines().map(str::to_owned));
+    for line in to_test {
         if line.trim().is_empty() {
             continue;
         }
         if IGNORE_AIRPORTS.contains(&&line[0..4]) {
             continue;
         }
-        if Metar::from_str(line).is_err() {
-            failed.insert(line.to_owned());
+        if Metar::from_str(&line).is_err() {
+            failed.insert(line);
         }
     }
     write_failed_metars(path, &failed);
