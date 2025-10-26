@@ -55,8 +55,8 @@ async fn run() -> ApplicationResult<()> {
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
     airports.fill_known_airports(&mut sct_file, &config)?;
     airports.add_metars(&config).await;
-    airports.read_atises().await.unwrap();
-    airports.select_runways_in_use(&config);
+    airports.read_atises_and_apply_runways().await.unwrap();
+    airports.runway_in_use_based_on_metar(&config);
     airports.apply_default_runways(&config);
     airports.sort();
     config

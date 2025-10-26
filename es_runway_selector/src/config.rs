@@ -31,7 +31,9 @@ use tracing::warn;
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
-use crate::{airports::Airports, error::ApplicationResult, runway::RunwayUse};
+use crate::{
+    airport::RunwayInUseSource, airports::Airports, error::ApplicationResult, runway::RunwayUse,
+};
 
 #[derive(Debug)]
 pub(crate) struct ESConfig {
@@ -260,15 +262,25 @@ fn write_runway_file<T: Write>(
             continue;
         }
 
-        for (runway, usage) in &airport.runways_in_use {
-            let flags = match usage {
-                RunwayUse::Departing => vec![1],
-                RunwayUse::Arriving => vec![0],
-                RunwayUse::Both => vec![1, 0],
+        for selection_method in [
+            RunwayInUseSource::Atis,
+            RunwayInUseSource::Metar,
+            RunwayInUseSource::Default,
+        ] {
+            let selection = match airport.runways_in_use.get(&selection_method) {
+                None => continue,
+                Some(s) => s,
             };
+            for (runway, usage) in selection {
+                let flags = match usage {
+                    RunwayUse::Departing => vec![1],
+                    RunwayUse::Arriving => vec![0],
+                    RunwayUse::Both => vec![1, 0],
+                };
 
-            for flag in flags {
-                writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
+                for flag in flags {
+                    writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
+                }
             }
         }
     }

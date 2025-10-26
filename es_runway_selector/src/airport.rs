@@ -10,19 +10,26 @@ use metar_decoder::{
     optional_data::OptionalData,
 };
 
-use crate::runway::{Runway, RunwayUse};
 use crate::{
     config::ESConfig,
     error::{ApplicationError, ApplicationResult},
     metar::{calculate_max_crosswind, calculate_max_headwind},
+    runway::{Runway, RunwayUse},
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RunwayInUseSource {
+    Atis,
+    Metar,
+    Default,
+}
 
 #[derive(Debug)]
 pub struct Airport {
     pub icao: String,
     pub metar: Option<Metar>,
     pub runways: Vec<Runway>,
-    pub runways_in_use: IndexMap<String, RunwayUse>,
+    pub runways_in_use: IndexMap<RunwayInUseSource, IndexMap<String, RunwayUse>>,
 }
 
 #[derive(Debug)]

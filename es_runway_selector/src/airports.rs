@@ -10,10 +10,14 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-use crate::atis::find_runway_in_use_from_atis;
-use crate::metar::get_metars;
-use crate::runway::{Runway, RunwayDirection, RunwayUse};
-use crate::{airport::Airport, config::ESConfig, error::ApplicationResult};
+use crate::{
+    airport::{Airport, RunwayInUseSource},
+    atis::find_runway_in_use_from_atis,
+    config::ESConfig,
+    error::ApplicationResult,
+    metar::get_metars,
+    runway::{Runway, RunwayDirection, RunwayUse},
+};
 
 pub struct Airports {
     pub airports: IndexMap<String, Airport>,
@@ -87,7 +91,7 @@ impl Airports {
         }
     }
 
-    pub async fn read_atises(&mut self) -> ApplicationResult<()> {
+    pub async fn read_atises_and_apply_runways(&mut self) -> ApplicationResult<()> {
         let icaos = self.identifiers();
         let data = reqwest::get("https://data.vatsim.net/v3/vatsim-data.json")
             .await?
@@ -129,6 +133,8 @@ impl Airports {
             for (runway, config) in find_runway_in_use_from_atis(&text) {
                 airport
                     .runways_in_use
+                    .entry(RunwayInUseSource::Atis)
+                    .or_default()
                     .entry(runway)
                     .and_modify(|e| {
                         *e = match (*e, config) {
@@ -145,13 +151,14 @@ impl Airports {
         Ok(())
     }
 
-    pub fn select_runways_in_use(&mut self, config: &ESConfig) {
+    pub fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
         for airport in self.airports.values_mut() {
-            if !airport.runways_in_use.is_empty() {
-                continue; // Already set by ATIS
-            }
-            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(config) {
-                airport.runways_in_use = runways_in_use;
+            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(config)
+                && !runways_in_use.is_empty()
+            {
+                airport
+                    .runways_in_use
+                    .insert(RunwayInUseSource::Metar, runways_in_use);
             }
         }
     }
@@ -162,9 +169,10 @@ impl Airports {
             if airport.runways_in_use.is_empty()
                 && let Some(runway) = defaults.get(airport.icao.as_str())
             {
-                airport
-                    .runways_in_use
-                    .insert(format!("{runway:02}"), RunwayUse::Both);
+                airport.runways_in_use.insert(
+                    RunwayInUseSource::Default,
+                    [(format!("{runway:02}"), RunwayUse::Both)].into(),
+                );
             }
         }
     }
