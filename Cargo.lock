@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "es_runway_selector"
-version = "0.0.1-alpha.18"
+version = "0.0.1-alpha.19"
 dependencies = [
  "cargo-license",
  "clap",
@@ -1288,7 +1288,7 @@ checksum = "0399f9d26e5191ce32c498bebd31e7a3ceabc2745f0ac54af3f335126c3f24b3"
 
 [[package]]
 name = "find_bad_metar_job"
-version = "0.0.1-alpha.18"
+version = "0.0.1-alpha.19"
 dependencies = [
  "futures",
  "indexmap 2.12.0",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "metar_decoder"
-version = "0.0.1-alpha.18"
+version = "0.0.1-alpha.19"
 dependencies = [
  "itertools 0.14.0",
  "jiff",
