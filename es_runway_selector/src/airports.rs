@@ -6,7 +6,7 @@ use indexmap::{IndexMap, IndexSet};
 use tracing_unwrap::ResultExt;
 
 use std::{
-    io::Read,
+    io::{self, Read, Write},
     ops::{Index, IndexMut},
 };
 
@@ -190,6 +190,57 @@ impl Airports {
 
     pub fn sort(&mut self) {
         self.airports.sort_unstable_keys();
+    }
+
+    pub(crate) fn make_runway_report(&self) {
+        let mut stdout = std::io::stdout().lock();
+        self.make_runway_report_with_writer(&mut stdout)
+            .expect("Failed to write runway report");
+    }
+
+    fn make_runway_report_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut counter = IndexMap::new();
+        'airport_loop: for airport in self.airports.values() {
+            for selection_source in RunwayInUseSource::default_sort_order() {
+                if airport.runways_in_use.contains_key(&selection_source) {
+                    *counter.entry(Some(selection_source)).or_insert(0) += 1;
+                    continue 'airport_loop;
+                }
+            }
+            *counter.entry(None).or_insert(0) += 1;
+        }
+        counter.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(k1), Some(k2)) => k1.cmp(k2),
+        });
+        writeln!(writer, "Runway selection report:")?;
+        for (source, count) in counter {
+            match source {
+                Some(RunwayInUseSource::Atis) => writeln!(
+                    writer,
+                    "{:<46} {}",
+                    "Airports runway config selected from ATIS:", count
+                )?,
+                Some(RunwayInUseSource::Metar) => writeln!(
+                    writer,
+                    "{:<46} {}",
+                    "Airports runway config selected from METAR:", count
+                )?,
+                Some(RunwayInUseSource::Default) => writeln!(
+                    writer,
+                    "{:<46} {}",
+                    "Airports runway config selected from fallback:", count
+                )?,
+                None => writeln!(
+                    writer,
+                    "{:<46} {}",
+                    "Airports without selected runway config:", count
+                )?,
+            };
+        }
+        Ok(())
     }
 }
 

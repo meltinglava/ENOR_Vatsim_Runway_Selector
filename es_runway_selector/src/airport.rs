@@ -24,6 +24,16 @@ pub enum RunwayInUseSource {
     Default,
 }
 
+impl RunwayInUseSource {
+    pub fn default_sort_order() -> [RunwayInUseSource; 3] {
+        [
+            RunwayInUseSource::Atis,
+            RunwayInUseSource::Metar,
+            RunwayInUseSource::Default,
+        ]
+    }
+}
+
 #[derive(Debug)]
 pub struct Airport {
     pub icao: String,

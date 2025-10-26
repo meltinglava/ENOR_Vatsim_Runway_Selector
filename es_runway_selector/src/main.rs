@@ -75,6 +75,8 @@ async fn run() -> ApplicationResult<()> {
         }
     }
 
+    airports.make_runway_report();
+
     Ok(())
 }
 

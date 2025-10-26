@@ -262,11 +262,7 @@ fn write_runway_file<T: Write>(
             continue;
         }
 
-        for selection_method in [
-            RunwayInUseSource::Atis,
-            RunwayInUseSource::Metar,
-            RunwayInUseSource::Default,
-        ] {
+        for selection_method in RunwayInUseSource::default_sort_order() {
             let selection = match airport.runways_in_use.get(&selection_method) {
                 None => continue,
                 Some(s) => s,
