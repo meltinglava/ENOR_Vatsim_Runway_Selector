@@ -125,7 +125,12 @@ fn scale_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
 mod tests {
     use std::str::FromStr;
 
-    use crate::{airport::Airport, airports::Airports, config::ESConfig, runway::RunwayUse};
+    use crate::{
+        airport::{Airport, RunwayInUseSource},
+        airports::Airports,
+        config::ESConfig,
+        runway::RunwayUse,
+    };
 
     use super::*;
     use indexmap::IndexMap;
@@ -201,10 +206,13 @@ mod tests {
         let airport = make_test_airport("ENMH", metar);
         let mut airports = Airports::new();
         airports.add_airport(airport);
-        airports.select_runways_in_use(&ESConfig::new_for_test());
+        airports.runway_in_use_based_on_metar(&ESConfig::new_for_test());
         assert_eq!(
             airports["ENMH"].runways_in_use,
-            IndexMap::from([("35".to_string(), RunwayUse::Both),])
+            IndexMap::from([(
+                RunwayInUseSource::Metar,
+                [("35".to_string(), RunwayUse::Both)].into()
+            )])
         );
     }
 
