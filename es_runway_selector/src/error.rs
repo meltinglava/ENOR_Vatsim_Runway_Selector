@@ -1,6 +1,7 @@
 use std::{io, num::ParseIntError};
 
 use config::ConfigError;
+use self_update::errors::Error as SelfUpdateError;
 use thiserror::Error;
 pub(crate) type ApplicationResult<T> = Result<T, ApplicationError>;
 
@@ -22,4 +23,6 @@ pub(crate) enum ApplicationError {
     TimeError(#[from] jiff::Error),
     #[error("No runway to set based on wind.")]
     NoRunwayToSet,
+    #[error("Self update error: {0}")]
+    SelfUpdateError(#[from] SelfUpdateError),
 }

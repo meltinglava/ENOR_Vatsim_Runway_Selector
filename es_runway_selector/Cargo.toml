@@ -25,6 +25,7 @@ ratatui = "0.29.0"
 ratatui-explorer = "0.2.1"
 regex = "1.12.2"
 reqwest = { workspace = true }
+self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rustls", "archive-tar"], default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
