@@ -29,6 +29,7 @@ self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rust
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
+tabled = "0.20.0"
 thiserror = "2.0.17"
 tokio = { workspace = true }
 toml = { version = "0.9.8", features = ["preserve_order"] }

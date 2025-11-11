@@ -3,6 +3,8 @@ use encoding::{
     all::{ISO_8859_1, UTF_8},
 };
 use indexmap::{IndexMap, IndexSet};
+use itertools::Itertools;
+use tabled::builder::Builder;
 use tracing_unwrap::ResultExt;
 
 use std::{
@@ -22,6 +24,9 @@ use crate::{
 pub struct Airports {
     pub airports: IndexMap<String, Airport>,
 }
+
+type AirportsConfigReportData =
+    IndexMap<Option<RunwayInUseSource>, Vec<(String, IndexMap<String, RunwayUse>)>>;
 
 impl Airports {
     pub fn new() -> Self {
@@ -199,15 +204,21 @@ impl Airports {
     }
 
     fn make_runway_report_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut counter = IndexMap::new();
+        let mut counter = AirportsConfigReportData::new();
         'airport_loop: for airport in self.airports.values() {
             for selection_source in RunwayInUseSource::default_sort_order() {
-                if airport.runways_in_use.contains_key(&selection_source) {
-                    *counter.entry(Some(selection_source)).or_insert(0) += 1;
+                if let Some(runway_selection) = airport.runways_in_use.get(&selection_source) {
+                    counter
+                        .entry(Some(selection_source))
+                        .or_insert_with(|| Vec::with_capacity(1))
+                        .push((airport.icao.clone(), runway_selection.clone()));
                     continue 'airport_loop;
                 }
             }
-            *counter.entry(None).or_insert(0) += 1;
+            counter
+                .entry(None)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push((airport.icao.clone(), IndexMap::new()));
         }
         counter.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
             (None, None) => std::cmp::Ordering::Equal,
@@ -215,33 +226,55 @@ impl Airports {
             (Some(_), None) => std::cmp::Ordering::Less,
             (Some(k1), Some(k2)) => k1.cmp(k2),
         });
-        writeln!(writer, "Runway selection report:")?;
-        for (source, count) in counter {
-            match source {
-                Some(RunwayInUseSource::Atis) => writeln!(
-                    writer,
-                    "{:<46} {}",
-                    "Airports runway config selected from ATIS:", count
-                )?,
-                Some(RunwayInUseSource::Metar) => writeln!(
-                    writer,
-                    "{:<46} {}",
-                    "Airports runway config selected from METAR:", count
-                )?,
-                Some(RunwayInUseSource::Default) => writeln!(
-                    writer,
-                    "{:<46} {}",
-                    "Airports runway config selected from fallback:", count
-                )?,
-                None => writeln!(
-                    writer,
-                    "{:<46} {}",
-                    "Airports without selected runway config:", count
-                )?,
-            };
-        }
+        write_runway_report_tabled(writer, &counter)?;
         Ok(())
     }
+}
+
+fn write_runway_report_tabled<W: Write>(
+    writer: &mut W,
+    data: &AirportsConfigReportData,
+) -> io::Result<()> {
+    let mut builder = Builder::default();
+    builder.push_record([
+        "Selection Source",
+        "Number of Airports",
+        "Airports and Runways",
+    ]);
+    for (source, configs) in data {
+        let source_str = match source {
+            Some(RunwayInUseSource::Atis) => "Airports runway config selected from ATIS:",
+            Some(RunwayInUseSource::Metar) => "Airports runway config selected from METAR:",
+            Some(RunwayInUseSource::Default) => "Airports runway config selected from fallback:",
+            None => "Airports without selected runway config:",
+        };
+        let airports_str = configs
+            .iter()
+            .map(|(icao, runways)| {
+                if runways.is_empty() {
+                    return icao.to_owned();
+                }
+                let runways_str = runways
+                    .iter()
+                    .map(|(rw, usage)| {
+                        format!(
+                            "{}{}",
+                            rw,
+                            match usage {
+                                RunwayUse::Arriving => " Arr",
+                                RunwayUse::Departing => " Dep",
+                                RunwayUse::Both => "",
+                            }
+                        )
+                    })
+                    .join(" + ");
+                format!("{}: {}", icao, runways_str)
+            })
+            .join("\n");
+        builder.push_record([source_str, &configs.len().to_string(), &airports_str]);
+    }
+    let table = builder.build();
+    writeln!(writer, "{}", table)
 }
 
 impl Index<&str> for Airports {
