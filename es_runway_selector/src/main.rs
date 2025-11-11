@@ -86,6 +86,7 @@ fn main() -> ApplicationResult<()> {
     if !cfg!(debug_assertions) {
         let _ = update(); // dont fail if update fails
     }
+    println!();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

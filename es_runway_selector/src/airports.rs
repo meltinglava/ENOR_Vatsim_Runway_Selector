@@ -226,55 +226,73 @@ impl Airports {
             (Some(_), None) => std::cmp::Ordering::Less,
             (Some(k1), Some(k2)) => k1.cmp(k2),
         });
-        write_runway_report_tabled(writer, &counter)?;
+        self.write_runway_report_tabled(writer, &counter)?;
         Ok(())
     }
-}
 
-fn write_runway_report_tabled<W: Write>(
-    writer: &mut W,
-    data: &AirportsConfigReportData,
-) -> io::Result<()> {
-    let mut builder = Builder::default();
-    builder.push_record([
-        "Selection Source",
-        "Number of Airports",
-        "Airports and Runways",
-    ]);
-    for (source, configs) in data {
-        let source_str = match source {
-            Some(RunwayInUseSource::Atis) => "Airports runway config selected from ATIS:",
-            Some(RunwayInUseSource::Metar) => "Airports runway config selected from METAR:",
-            Some(RunwayInUseSource::Default) => "Airports runway config selected from fallback:",
-            None => "Airports without selected runway config:",
-        };
-        let airports_str = configs
-            .iter()
-            .map(|(icao, runways)| {
-                if runways.is_empty() {
-                    return icao.to_owned();
+    fn write_runway_report_tabled<W: Write>(
+        &self,
+        writer: &mut W,
+        data: &AirportsConfigReportData,
+    ) -> io::Result<()> {
+        let mut builder = Builder::default();
+        builder.push_record([
+            "Selection Source",
+            "Number of Airports",
+            "Airports and Runways",
+            "METAR",
+        ]);
+        for (source, configs) in data {
+            let source_str = match source {
+                Some(RunwayInUseSource::Atis) => "Airports runway config selected from ATIS:",
+                Some(RunwayInUseSource::Metar) => "Airports runway config selected from METAR:",
+                Some(RunwayInUseSource::Default) => {
+                    "Airports runway config selected from fallback:"
                 }
-                let runways_str = runways
-                    .iter()
-                    .map(|(rw, usage)| {
-                        format!(
-                            "{}{}",
-                            rw,
-                            match usage {
-                                RunwayUse::Arriving => " Arr",
-                                RunwayUse::Departing => " Dep",
-                                RunwayUse::Both => "",
-                            }
-                        )
-                    })
-                    .join(" + ");
-                format!("{}: {}", icao, runways_str)
-            })
-            .join("\n");
-        builder.push_record([source_str, &configs.len().to_string(), &airports_str]);
+                None => "Airports without selected runway config:",
+            };
+            let airports_str = configs
+                .iter()
+                .map(|(icao, runways)| {
+                    if runways.is_empty() {
+                        return icao.to_owned();
+                    }
+                    let runways_str = runways
+                        .iter()
+                        .map(|(rw, usage)| {
+                            format!(
+                                "{}{}",
+                                rw,
+                                match usage {
+                                    RunwayUse::Arriving => " Arr",
+                                    RunwayUse::Departing => " Dep",
+                                    RunwayUse::Both => "",
+                                }
+                            )
+                        })
+                        .join(" + ");
+                    format!("{}: {}", icao, runways_str)
+                })
+                .join("\n");
+            let metars = configs
+                .iter()
+                .map(|(icao, _)| -> String {
+                    self.airports
+                        .get(icao)
+                        .and_then(|airport| airport.metar.as_ref().map(|m| m.raw.clone()))
+                        .unwrap_or_else(|| format!("{} No METAR", icao))
+                })
+                .join("\n");
+            builder.push_record([
+                source_str,
+                &configs.len().to_string(),
+                &airports_str,
+                &metars,
+            ]);
+        }
+        let table = builder.build();
+        writeln!(writer, "{}", table)
     }
-    let table = builder.build();
-    writeln!(writer, "{}", table)
 }
 
 impl Index<&str> for Airports {
