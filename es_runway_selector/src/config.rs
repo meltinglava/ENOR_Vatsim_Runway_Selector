@@ -110,7 +110,7 @@ impl ESConfig {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_env = "musl")]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
@@ -130,7 +130,7 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     search_for_ese_with_possibilities(&[possibility])
 }
 
-#[cfg(not(windows))]
+#[cfg(not(target_env = "musl"))]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,

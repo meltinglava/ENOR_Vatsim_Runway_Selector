@@ -39,7 +39,7 @@ tracing-unwrap = { workspace = true }
 walkdir = "2.5.0"
 whoami = "1.6.1"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(not(target_env = "musl"))'.dependencies]
 rfd = "0.15.4"
 
 [dev-dependencies]
