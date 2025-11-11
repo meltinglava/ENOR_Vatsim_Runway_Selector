@@ -1,16 +1,13 @@
 use std::{
     borrow::Cow,
     fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Stdout, Write},
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::LazyLock,
     time::SystemTime,
 };
 
 use config::{Config, ConfigError};
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
 use directories::{BaseDirs, ProjectDirs, UserDirs};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
@@ -18,12 +15,6 @@ use jiff::{
     civil::{DateTime, datetime},
     tz::TimeZone,
 };
-use ratatui::{
-    Terminal,
-    backend::CrosstermBackend,
-    crossterm::event::{self, Event, KeyCode},
-};
-use ratatui_explorer::{File, FileExplorer};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -110,7 +101,7 @@ impl ESConfig {
     }
 }
 
-#[cfg(target_env = "musl")]
+#[cfg(not(target_env = "musl"))]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
@@ -130,11 +121,23 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     search_for_ese_with_possibilities(&[possibility])
 }
 
-#[cfg(not(target_env = "musl"))]
+#[cfg(target_env = "musl")]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
 ) -> Option<(PathBuf, String)> {
+    use crossterm::terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    };
+    use ratatui::{
+        Terminal,
+        backend::CrosstermBackend,
+        crossterm::event::{self, Event, KeyCode},
+    };
+    use ratatui_explorer::{File, FileExplorer};
+
+    use std::io::Stdout;
+
     fn pick_folder() -> io::Result<Option<PathBuf>> {
         use crossterm::ExecutableCommand;
 
