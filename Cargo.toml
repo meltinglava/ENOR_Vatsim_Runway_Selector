@@ -4,7 +4,7 @@ members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job"]
 
 [workspace.package]
 authors = ["meltinglava"]
-version = "0.0.1-alpha.22"
+version = "0.0.1-alpha.23"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Package for automaticly selecting runways for Euroscope in Polaris area"
