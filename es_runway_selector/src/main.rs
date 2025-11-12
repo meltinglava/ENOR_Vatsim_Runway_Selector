@@ -32,6 +32,7 @@ fn update() -> ApplicationResult<bool> {
         .repo_owner("meltinglava")
         .repo_name("ENOR_Vatsim_Runway_Selector")
         .bin_name("es_runway_selector")
+        .show_output(true)
         .show_download_progress(false)
         .current_version(cargo_crate_version!())
         .build()?
@@ -84,7 +85,10 @@ async fn run() -> ApplicationResult<()> {
 fn main() -> ApplicationResult<()> {
     tracing_subscriber::fmt::init();
     if !cfg!(debug_assertions) {
-        let _ = update(); // dont fail if update fails
+        match update() {
+            Ok(_) => (),
+            Err(e) => warn!("Update check failed: {0}, {0:?}", e),
+        }
     }
     println!();
     tokio::runtime::Builder::new_multi_thread()
