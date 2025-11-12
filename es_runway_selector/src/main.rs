@@ -27,12 +27,27 @@ struct Cli {
     clean_config: bool,
 }
 
+fn get_target() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows-msvc"
+    } else if cfg!(target_env = "musl") {
+        "linux-musl"
+    } else if cfg!(target_os = "linux") {
+        "x86_64-unknown-linux-gnu"
+    } else if cfg!(target_os = "macos") {
+        "x86_64-apple-darwin"
+    } else {
+        "unknown"
+    }
+}
+
 fn update() -> ApplicationResult<bool> {
     let update_status = self_update::backends::github::Update::configure()
         .repo_owner("meltinglava")
         .repo_name("ENOR_Vatsim_Runway_Selector")
         .bin_name("es_runway_selector")
         .show_output(true)
+        .target(get_target())
         .show_download_progress(false)
         .current_version(cargo_crate_version!())
         .build()?
