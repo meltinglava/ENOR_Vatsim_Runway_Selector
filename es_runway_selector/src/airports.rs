@@ -244,12 +244,10 @@ impl Airports {
         ]);
         for (source, configs) in data {
             let source_str = match source {
-                Some(RunwayInUseSource::Atis) => "Airports runway config selected from ATIS:",
-                Some(RunwayInUseSource::Metar) => "Airports runway config selected from METAR:",
-                Some(RunwayInUseSource::Default) => {
-                    "Airports runway config selected from fallback:"
-                }
-                None => "Airports without selected runway config:",
+                Some(RunwayInUseSource::Atis) => "ATIS",
+                Some(RunwayInUseSource::Metar) => "METAR",
+                Some(RunwayInUseSource::Default) => "fallback",
+                None => "No runway config:",
             };
             let airports_str = configs
                 .iter()
