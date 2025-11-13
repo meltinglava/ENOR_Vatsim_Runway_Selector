@@ -18,7 +18,7 @@ use jiff::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use tracing::warn;
+use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
@@ -33,6 +33,7 @@ pub(crate) struct ESConfig {
     #[allow(dead_code)] // used in tests
     config_file_path: PathBuf,
     config: Configurable,
+    app_launchers: IndexSet<AppLauncher>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +42,13 @@ struct Configurable {
     ignore_airports: IndexSet<String>,
     default_runways: IndexMap<String, u8>,
     euroscope_config_folder: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
+struct AppLauncher {
+    name: String,
+    args: Vec<String>,
+    prf: Option<PathBuf>,
 }
 
 impl Configurable {
@@ -57,11 +65,14 @@ impl ESConfig {
             .or_else(|| config.find_from_config())
             .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
 
+        let app_launchers = get_app_launchers(&config_file_path);
+
         Some(Self {
             euroscope_config_folder: sct_path,
             enor_file_prefix,
             config,
             config_file_path,
+            app_launchers,
         })
     }
 
@@ -99,6 +110,131 @@ impl ESConfig {
         file.set_len(0)?;
         write_runway_file(&mut file, airports, &start_of_file)
     }
+
+    pub async fn run_apps(&self, euroscope_ready: bool) {
+        for app in &self.app_launchers {
+            if (app.name == "Euroscope") == euroscope_ready {
+                let app = app.clone();
+                tokio::spawn(async move {
+                    app.run().await;
+                });
+            }
+        }
+    }
+}
+
+impl AppLauncher {
+    /// Lanch the application detached from the current process
+    async fn run(&self) {
+        let mut command = tokio::process::Command::new(&self.name);
+        for arg in &self.args {
+            command.arg(arg);
+        }
+        if let Some(prf) = &self.prf {
+            command.arg(prf.to_string_lossy().to_string());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            command.stdout(std::process::Stdio::null());
+            command.stderr(std::process::Stdio::null());
+            command.stdin(std::process::Stdio::null());
+        }
+        if let Err(e) = command.spawn() {
+            warn!("Failed to launch application {}: {}", self.name, e);
+        }
+    }
+}
+
+fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
+    let app_launchers_file_path = config_file_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("app_launchers.toml");
+
+    if !app_launchers_file_path.exists() {
+        debug!(
+            "App launchers config file does not exist at {:?}",
+            app_launchers_file_path
+        );
+        return IndexSet::new();
+    }
+
+    let raw_app_launchers_file = fs::read_to_string(&app_launchers_file_path).unwrap_or_log();
+
+    let toml_file: toml::Value = toml::from_str(&raw_app_launchers_file).unwrap_or_log();
+
+    let toml::Value::Table(map) = &toml_file else {
+        warn!(
+            "App launchers config file is not a table, it is: {:?}",
+            toml_file
+        );
+        return IndexSet::new();
+    };
+
+    let Some(array) = map.get("executable") else {
+        warn!(
+            "App launchers config file is not a table, it is: {:?}",
+            toml_file
+        );
+        return IndexSet::new();
+    };
+
+    let toml::Value::Array(executables) = array else {
+        warn!(
+            "App launchers config file 'executable' is not an array, it is: {:?}",
+            array
+        );
+        return IndexSet::new();
+    };
+
+    let mut app_launchers = IndexSet::new();
+
+    for exe in executables {
+        let toml::Value::Table(exe_table) = exe else {
+            warn!("App launcher entry is not a table, it is: {:?}", exe);
+            continue;
+        };
+
+        let name = match exe_table.get("name") {
+            Some(toml::Value::String(s)) => s.clone(),
+            _ => {
+                warn!(
+                    "App launcher entry missing 'name' field or it is not a string: {:?}",
+                    exe_table
+                );
+                continue;
+            }
+        };
+
+        let args = match exe_table.get("args") {
+            Some(toml::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| {
+                    if let toml::Value::String(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        let prf = match exe_table.get("prf") {
+            Some(toml::Value::String(s)) => Some(PathBuf::from(s)),
+            _ => None,
+        };
+
+        app_launchers.insert(AppLauncher { name, args, prf });
+    }
+
+    app_launchers
 }
 
 #[cfg(not(target_env = "musl"))]
@@ -392,6 +528,7 @@ mod tests {
                 enor_file_prefix: "ENOR-Test".to_string(),
                 config,
                 config_file_path: config_file,
+                app_launchers: IndexSet::new(),
             }
         }
     }
@@ -411,5 +548,38 @@ mod tests {
         let dt = get_es_file_name_time(&p);
         let target = DateTime::strptime("%Y%m%d%H%M%S", "20230403191923").unwrap();
         assert_eq!(dt, target);
+    }
+
+    // [[executable]]
+    // name = "Euroscope"
+    // prf = "enor_rads.prf"
+
+    // [[executable]]
+    // name = "Euroscope"
+    // prf = "enor_gnd.prf"
+
+    // [[executable]]
+    // name = "TrackAudio"
+
+    #[test]
+    fn test_app_loucher_reader() {
+        let config_file = get_app_launchers(&PathBuf::from("test.toml"));
+        let mut expected = IndexSet::new();
+        expected.insert(AppLauncher {
+            name: "Euroscope".to_string(),
+            args: vec![],
+            prf: Some(PathBuf::from("enor_rads.prf")),
+        });
+        expected.insert(AppLauncher {
+            name: "Euroscope".to_string(),
+            args: vec![],
+            prf: Some(PathBuf::from("enor_gnd.prf")),
+        });
+        expected.insert(AppLauncher {
+            name: "TrackAudio".to_string(),
+            args: vec![],
+            prf: None,
+        });
+        assert_eq!(config_file, expected);
     }
 }

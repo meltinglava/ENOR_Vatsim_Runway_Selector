@@ -1,0 +1,10 @@
+[[executable]]
+name = "Euroscope"
+prf = "enor_rads.prf"
+
+[[executable]]
+name = "Euroscope"
+prf = "enor_gnd.prf"
+
+[[executable]]
+name = "TrackAudio"

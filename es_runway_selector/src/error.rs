@@ -3,6 +3,7 @@ use std::{io, num::ParseIntError};
 use config::ConfigError;
 use self_update::errors::Error as SelfUpdateError;
 use thiserror::Error;
+use tokio::task::JoinError;
 pub(crate) type ApplicationResult<T> = Result<T, ApplicationError>;
 
 #[derive(Debug, Error)]
@@ -25,4 +26,6 @@ pub(crate) enum ApplicationError {
     NoRunwayToSet,
     #[error("Self update error: {0}")]
     SelfUpdateError(#[from] SelfUpdateError),
+    #[error("Join error: {0}")]
+    AsyncJoinError(#[from] JoinError),
 }

@@ -7,7 +7,7 @@ pub(crate) mod metar;
 pub(crate) mod runway;
 pub(crate) mod util;
 
-use std::fs::File;
+use std::{fs::File, sync::Arc};
 
 use airports::Airports;
 use clap::Parser;
@@ -18,6 +18,7 @@ use self_update::{
     cargo_crate_version,
 };
 use tracing::{info, trace, warn};
+use tracing_unwrap::OptionExt;
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -66,7 +67,11 @@ fn update() -> ApplicationResult<bool> {
 
 async fn run() -> ApplicationResult<()> {
     let cli = Cli::parse();
-    let config = ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap();
+    let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
+    let config_task1 = config.clone();
+    let task1 = tokio::spawn(async move {
+        config_task1.run_apps(false).await;
+    });
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
     airports.fill_known_airports(&mut sct_file, &config)?;
@@ -78,6 +83,11 @@ async fn run() -> ApplicationResult<()> {
     config
         .write_runways_to_euroscope_rwy_file(&airports)
         .unwrap();
+    let task2 = tokio::spawn(async move {
+        config.run_apps(true).await;
+    });
+
+    let tasks = [task1, task2];
 
     let no_runways_in_use = airports.airports_without_runway_config();
     for airport in no_runways_in_use {
@@ -93,6 +103,10 @@ async fn run() -> ApplicationResult<()> {
     println!();
 
     airports.make_runway_report();
+
+    for task in tasks {
+        task.await?;
+    }
 
     Ok(())
 }

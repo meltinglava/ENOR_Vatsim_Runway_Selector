@@ -20,7 +20,7 @@ reqwest = { version = "0.12", features = ["charset", "http2", "json", "rustls-tl
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145", features = ["indexmap", "preserve_order"] }
 serde_with = { version = "3.15.0", features = ["indexmap"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "tracing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "tracing", "process"] }
 tracing = { version = "0.1.41", features = ["valuable"] }
 tracing-subscriber = { version = "0.3.20", features = ["serde", "json", "valuable"] }
 tracing-test = "0.2.5"
