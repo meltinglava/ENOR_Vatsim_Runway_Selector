@@ -1,9 +1,9 @@
 [[executable]]
-name = "Euroscope"
+name = "EuroScope"
 prf = "enor_rads.prf"
 
 [[executable]]
-name = "Euroscope"
+name = "EuroScope"
 prf = "enor_gnd.prf"
 
 [[executable]]

@@ -42,6 +42,7 @@ struct Configurable {
     ignore_airports: IndexSet<String>,
     default_runways: IndexMap<String, u8>,
     euroscope_config_folder: Option<PathBuf>,
+    euroscope_executable_path: Option<IndexMap<String, PathBuf>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -113,20 +114,54 @@ impl ESConfig {
 
     pub async fn run_apps(&self, euroscope_ready: bool) {
         for app in &self.app_launchers {
-            if (app.name == "Euroscope") == euroscope_ready {
+            if (app.name == "EuroScope") == euroscope_ready {
                 let app = app.clone();
+                let exe_path = self
+                    .config
+                    .euroscope_executable_path
+                    .clone()
+                    .unwrap_or_default()
+                    .get(&app.name)
+                    .cloned()
+                    .or_else(|| find_exe_path(&app.name));
+                let exe_path = match exe_path {
+                    Some(p) => p,
+                    None => {
+                        warn!("Could not find executable path for {}", app.name);
+                        continue;
+                    }
+                };
                 tokio::spawn(async move {
-                    app.run().await;
+                    app.run(&exe_path).await;
                 });
             }
         }
     }
 }
 
+fn find_exe_path(name: &str) -> Option<PathBuf> {
+    directories::BaseDirs::new()
+        .map(|bd| bd.config_dir().join("Microsoft\\Windows\\Start Menu\\Programs"))
+        .and_then(|start_menu| {
+            WalkDir::new(&start_menu)
+                .max_depth(3)
+                .into_iter()
+                .filter_map(Result::ok)
+                .find(|e| {
+                    let file_name = e.file_name().to_string_lossy();
+                    let Some((exe_name, extention)) = file_name.split_once('.') else {
+                        return false;
+                    };
+                    exe_name == name && ["lnk", "exe"].contains(&extention)
+                })
+                .map(|e| e.path().to_path_buf())
+        })
+}
+
 impl AppLauncher {
     /// Lanch the application detached from the current process
-    async fn run(&self) {
-        let mut command = tokio::process::Command::new(&self.name);
+    async fn run(&self, exe_path: &Path) {
+        let mut command = tokio::process::Command::new(exe_path);
         for arg in &self.args {
             command.arg(arg);
         }
@@ -146,7 +181,7 @@ impl AppLauncher {
             command.stdin(std::process::Stdio::null());
         }
         if let Err(e) = command.spawn() {
-            warn!("Failed to launch application {}: {}", self.name, e);
+            warn!("Failed to launch application {}: {:?}", self.name, e);
         }
     }
 }
