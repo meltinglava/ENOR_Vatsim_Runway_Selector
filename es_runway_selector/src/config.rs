@@ -1,5 +1,11 @@
 use std::{
-    borrow::Cow, ffi::OsStr, fs::{self, OpenOptions}, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::LazyLock, time::SystemTime
+    borrow::Cow,
+    ffi::OsStr,
+    fs::{self, OpenOptions},
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::SystemTime,
 };
 
 use config::{Config, ConfigError};
@@ -146,17 +152,22 @@ impl ESConfig {
 }
 
 fn is_process_running(name: &str) -> bool {
-
     let mut sys = System::new_all();
     sys.refresh_processes(ProcessesToUpdate::All, true);
 
     let lower = name.to_lowercase();
-    sys.processes_by_name(OsStr::new(name)).chain(sys.processes_by_name(OsStr::new(&lower))).next().is_some()
+    sys.processes_by_name(OsStr::new(name))
+        .chain(sys.processes_by_name(OsStr::new(&lower)))
+        .next()
+        .is_some()
 }
 
 fn find_exe_path(name: &str) -> Option<PathBuf> {
     directories::BaseDirs::new()
-        .map(|bd| bd.config_dir().join("Microsoft\\Windows\\Start Menu\\Programs"))
+        .map(|bd| {
+            bd.config_dir()
+                .join("Microsoft\\Windows\\Start Menu\\Programs")
+        })
         .and_then(|start_menu| {
             WalkDir::new(&start_menu)
                 .max_depth(3)
@@ -189,8 +200,8 @@ impl AppLauncher {
                 let mut cmd = Command::new("cmd");
                 cmd.arg("/c")
                     .arg("start")
-                    .arg("")         // window title placeholder for `start`
-                    .arg(exe_path);  // the .lnk (or any shell-handled file)
+                    .arg("") // window title placeholder for `start`
+                    .arg(exe_path); // the .lnk (or any shell-handled file)
                 cmd
             } else {
                 // Normal executable: launch directly
@@ -199,9 +210,7 @@ impl AppLauncher {
         };
 
         #[cfg(not(target_os = "windows"))]
-        let mut command = {
-            Command::new(exe_path)
-        };
+        let mut command = { Command::new(exe_path) };
 
         // Common args
         for arg in &self.args {
