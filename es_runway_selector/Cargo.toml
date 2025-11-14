@@ -44,5 +44,11 @@ ratatui = "0.29.0"
 ratatui-explorer = "0.2.1"
 crossterm = "0.29.0"
 
+[target.'cfg(windows)'.dependencies]
+sysinfo = { version = "0.37.2", features = ["windows", "serde"] }
+
+[target.'cfg(not(windows))'.dependencies]
+sysinfo = { version = "0.37.2", features = ["serde"]}
+
 [dev-dependencies]
 tracing-test = { workspace = true }

@@ -1,10 +1,5 @@
 use std::{
-    borrow::Cow,
-    fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
-    sync::LazyLock,
-    time::SystemTime,
+    borrow::Cow, ffi::OsStr, fs::{self, OpenOptions}, io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::LazyLock, time::SystemTime
 };
 
 use config::{Config, ConfigError};
@@ -18,6 +13,8 @@ use jiff::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use sysinfo::{ProcessesToUpdate, System};
+use tokio::process::Command;
 use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
@@ -113,8 +110,16 @@ impl ESConfig {
     }
 
     pub async fn run_apps(&self, euroscope_ready: bool) {
+        let mut already_running = IndexMap::new();
         for app in &self.app_launchers {
             if (app.name == "EuroScope") == euroscope_ready {
+                let entry = already_running
+                    .entry(app.name.clone())
+                    .or_insert_with(|| is_process_running(&app.name));
+                if *entry {
+                    debug!("{} is already running, skipping launch", app.name);
+                    continue;
+                }
                 let app = app.clone();
                 let exe_path = self
                     .config
@@ -131,12 +136,22 @@ impl ESConfig {
                         continue;
                     }
                 };
+                let prf_path = self.euroscope_config_folder.clone();
                 tokio::spawn(async move {
-                    app.run(&exe_path).await;
+                    app.run(&exe_path, prf_path).await;
                 });
             }
         }
     }
+}
+
+fn is_process_running(name: &str) -> bool {
+
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    let lower = name.to_lowercase();
+    sys.processes_by_name(OsStr::new(name)).chain(sys.processes_by_name(OsStr::new(&lower))).next().is_some()
 }
 
 fn find_exe_path(name: &str) -> Option<PathBuf> {
@@ -160,28 +175,65 @@ fn find_exe_path(name: &str) -> Option<PathBuf> {
 
 impl AppLauncher {
     /// Lanch the application detached from the current process
-    async fn run(&self, exe_path: &Path) {
-        let mut command = tokio::process::Command::new(exe_path);
+    async fn run(&self, exe_path: &Path, prf_folder: PathBuf) {
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let is_lnk = exe_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("lnk"))
+                .unwrap_or(false);
+
+            if is_lnk {
+                // cmd.exe /c start "" "C:\path\to\shortcut.lnk" [args...]
+                let mut cmd = Command::new("cmd");
+                cmd.arg("/c")
+                    .arg("start")
+                    .arg("")         // window title placeholder for `start`
+                    .arg(exe_path);  // the .lnk (or any shell-handled file)
+                cmd
+            } else {
+                // Normal executable: launch directly
+                Command::new(exe_path)
+            }
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            Command::new(exe_path)
+        };
+
+        // Common args
         for arg in &self.args {
             command.arg(arg);
         }
+
         if let Some(prf) = &self.prf {
-            command.arg(prf.to_string_lossy().to_string());
+            command.arg((prf_folder.join(prf)).to_string_lossy().to_string());
         }
+
         #[cfg(target_os = "windows")]
         {
             const DETACHED_PROCESS: u32 = 0x00000008;
             const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
             command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         }
+
         #[cfg(not(target_os = "windows"))]
         {
-            command.stdout(std::process::Stdio::null());
-            command.stderr(std::process::Stdio::null());
-            command.stdin(std::process::Stdio::null());
+            use std::process::Stdio;
+            command
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null());
         }
+
         if let Err(e) = command.spawn() {
-            warn!("Failed to launch application {}: {:?}", self.name, e);
+            warn!(
+                "Failed to launch application {}: {:?}",
+                exe_path.to_string_lossy(),
+                e
+            );
         }
     }
 }
