@@ -4,10 +4,31 @@
 
 This application is work in progress.
 
-It will be used to set default runways for euroscope on Norway. Do not rely on
+It will be used to set default runways for euroscope in Norway. Do not rely on
 this for any real world operation.
 
 This is based on alot of work by [Adrian2k](https://github.com/Adrian2k/ENOR-autorwy)
+
+## App louncher
+
+The application has the ablility to open euroscope (and other applications).
+This needs to be configured.
+
+1. open file explorer (`windowsbutton + e` default shortcut).
+2. Go to path: `%APPDATA%/meltinglava/es_runway_selector/config`. You acn paste it
+   in on the top just click on the unfilled area at the top showing current path.
+   - If the folder does not exsist just run `es_runway_selector` once. It will
+     create it
+3. copy file [app_launchers.toml](es_runway_selector/app_launchers.toml) to the
+   folder you just opened.
+4. Edit the file as you see fit. How many Euroscope instances that you want, and
+   give name of the prf file you want to start each euroscope instance in.
+
+### Any issues
+
+Please report them on this [github issue
+board](https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector/issues).
+But before reporting just make sure that noone has already reported it.
 
 #### License
 

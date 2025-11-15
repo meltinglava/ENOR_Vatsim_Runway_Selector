@@ -449,7 +449,7 @@ pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
 }
 
 fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), ConfigError> {
-    let config_dir = ProjectDirs::from("", "meltinglava", "vatsca_es_setup")
+    let config_dir = ProjectDirs::from("", "meltinglava", "es_runway_selector")
         .expect("Failed to get project directories")
         .config_dir()
         .to_path_buf();
