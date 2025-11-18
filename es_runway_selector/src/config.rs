@@ -117,6 +117,7 @@ impl ESConfig {
 
     pub async fn run_apps(&self, euroscope_ready: bool) {
         let mut already_running = IndexMap::new();
+        let mut first_euroscope_started = false;
         for app in &self.app_launchers {
             if (app.name == "EuroScope") == euroscope_ready {
                 let entry = already_running
@@ -143,7 +144,19 @@ impl ESConfig {
                     }
                 };
                 let prf_path = self.euroscope_config_folder.clone();
+                let es = app.name == "EuroScope";
+                let pre_wait = if es && !first_euroscope_started {
+                    true
+                } else {
+                    first_euroscope_started = true;
+                    false
+                };
                 tokio::spawn(async move {
+                    // Give Euroscope some time to ensure that the first windows
+                    // becomes the main one.
+                    if pre_wait {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
                     app.run(&exe_path, prf_path).await;
                 });
             }
@@ -275,7 +288,7 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
 
     let Some(array) = map.get("executable") else {
         warn!(
-            "App launchers config file is not a table, it is: {:?}",
+            "App launchers config file is not an array, it is: {:?}",
             toml_file
         );
         return IndexSet::new();
