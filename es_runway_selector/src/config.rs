@@ -176,25 +176,32 @@ fn is_process_running(name: &str) -> bool {
 }
 
 fn find_exe_path(name: &str) -> Option<PathBuf> {
-    directories::BaseDirs::new()
-        .map(|bd| {
-            bd.config_dir()
-                .join("Microsoft\\Windows\\Start Menu\\Programs")
-        })
-        .and_then(|start_menu| {
-            WalkDir::new(&start_menu)
+    let start_menu_sub_folder = "Microsoft\\Windows\\Start Menu\\Programs";
+    let start_menu_program_data =
+        PathBuf::from(format!("C:\\ProgramData\\{}", start_menu_sub_folder));
+    let start_menu_folders: &[PathBuf] = match directories::BaseDirs::new() {
+        Some(f) => &[
+            f.config_dir().join(start_menu_sub_folder),
+            start_menu_program_data,
+        ],
+        None => &[start_menu_program_data],
+    };
+    start_menu_folders
+        .iter()
+        .flat_map(|p| {
+            WalkDir::new(p)
                 .max_depth(3)
                 .into_iter()
                 .filter_map(Result::ok)
-                .find(|e| {
-                    let file_name = e.file_name().to_string_lossy();
-                    let Some((exe_name, extention)) = file_name.split_once('.') else {
-                        return false;
-                    };
-                    exe_name == name && ["lnk", "exe"].contains(&extention)
-                })
-                .map(|e| e.path().to_path_buf())
         })
+        .find(|e| {
+            let file_name = e.file_name().to_string_lossy();
+            let Some((exe_name, extention)) = file_name.split_once('.') else {
+                return false;
+            };
+            exe_name == name && ["lnk", "exe"].contains(&extention)
+        })
+        .map(|e| e.path().to_path_buf())
 }
 
 impl AppLauncher {
