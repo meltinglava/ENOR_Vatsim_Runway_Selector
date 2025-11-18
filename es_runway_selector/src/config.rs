@@ -115,9 +115,10 @@ impl ESConfig {
         write_runway_file(&mut file, airports, &start_of_file)
     }
 
-    pub async fn run_apps(&self, euroscope_ready: bool) {
+    pub async fn run_apps(&self, euroscope_ready: bool) -> Vec<tokio::task::JoinHandle<()>> {
         let mut already_running = IndexMap::new();
         let mut first_euroscope_started = false;
+        let mut handles = Vec::new();
         for app in &self.app_launchers {
             if (app.name == "EuroScope") == euroscope_ready {
                 let entry = already_running
@@ -136,6 +137,8 @@ impl ESConfig {
                     .get(&app.name)
                     .cloned()
                     .or_else(|| find_exe_path(&app.name));
+
+                debug!("Found executable path for {}: {:?}", app.name, exe_path);
                 let exe_path = match exe_path {
                     Some(p) => p,
                     None => {
@@ -145,22 +148,20 @@ impl ESConfig {
                 };
                 let prf_path = self.euroscope_config_folder.clone();
                 let es = app.name == "EuroScope";
-                let pre_wait = if es && !first_euroscope_started {
+                let pre_wait = if es && first_euroscope_started {
                     true
                 } else {
                     first_euroscope_started = true;
                     false
                 };
-                tokio::spawn(async move {
+                handles.push(tokio::spawn(async move {
                     // Give Euroscope some time to ensure that the first windows
                     // becomes the main one.
-                    if pre_wait {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    }
-                    app.run(&exe_path, prf_path).await;
-                });
+                    app.run(&exe_path, prf_path, pre_wait).await;
+                }));
             }
         }
+        handles
     }
 }
 
@@ -206,7 +207,7 @@ fn find_exe_path(name: &str) -> Option<PathBuf> {
 
 impl AppLauncher {
     /// Lanch the application detached from the current process
-    async fn run(&self, exe_path: &Path, prf_folder: PathBuf) {
+    async fn run(&self, exe_path: &Path, prf_folder: PathBuf, pre_wait: bool) {
         #[cfg(target_os = "windows")]
         let mut command = {
             let is_lnk = exe_path
@@ -230,7 +231,7 @@ impl AppLauncher {
         };
 
         #[cfg(not(target_os = "windows"))]
-        let mut command = { Command::new(exe_path) };
+        let mut command = Command::new(exe_path);
 
         // Common args
         for arg in &self.args {
@@ -256,6 +257,11 @@ impl AppLauncher {
                 .stderr(Stdio::null())
                 .stdin(Stdio::null());
         }
+        if pre_wait {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
+        debug!("Starting application: {:?}", command);
 
         if let Err(e) = command.spawn() {
             warn!(
@@ -349,6 +355,11 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
 
         app_launchers.insert(AppLauncher { name, args, prf });
     }
+
+    debug!(
+        "Loaded app launchers from {:?}: {:?}",
+        app_launchers_file_path, app_launchers
+    );
 
     app_launchers
 }

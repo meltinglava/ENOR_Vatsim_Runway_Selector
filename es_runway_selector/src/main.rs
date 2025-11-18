@@ -70,7 +70,10 @@ async fn run() -> ApplicationResult<()> {
     let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
-        config_task1.run_apps(false).await;
+        let handles = config_task1.run_apps(false).await;
+        for handle in handles {
+            handle.await.unwrap();
+        }
     });
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
@@ -84,7 +87,10 @@ async fn run() -> ApplicationResult<()> {
         .write_runways_to_euroscope_rwy_file(&airports)
         .unwrap();
     let task2 = tokio::spawn(async move {
-        config.run_apps(true).await;
+        let handles = config.run_apps(true).await;
+        for handle in handles {
+            handle.await.unwrap();
+        }
     });
 
     let tasks = [task1, task2];
