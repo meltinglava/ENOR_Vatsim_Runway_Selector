@@ -1,3 +1,5 @@
+es_main_window_delay_ms = 2000
+
 ignore_airports = [
   "ENRE",
   "ENGK",
@@ -18,7 +20,7 @@ ignore_airports = [
 [default_runways]
 ENAL = 24
 ENAN = 14
-ENAT = 14
+ENAT = 11
 ENBL = 25
 ENBN =  3
 ENBO =  7

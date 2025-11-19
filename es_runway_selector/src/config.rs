@@ -5,7 +5,7 @@ use std::{
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::LazyLock,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use config::{Config, ConfigError};
@@ -20,7 +20,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use sysinfo::{ProcessesToUpdate, System};
-use tokio::process::Command;
+use tokio::{process::Command, time::sleep};
 use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
@@ -46,6 +46,7 @@ struct Configurable {
     default_runways: IndexMap<String, u8>,
     euroscope_config_folder: Option<PathBuf>,
     euroscope_executable_path: Option<IndexMap<String, PathBuf>>,
+    es_main_window_delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -154,10 +155,16 @@ impl ESConfig {
                     first_euroscope_started = true;
                     false
                 };
+                let sleep_duration =
+                    Duration::from_millis(self.config.es_main_window_delay_ms.unwrap_or(2000));
                 handles.push(tokio::spawn(async move {
                     // Give Euroscope some time to ensure that the first windows
                     // becomes the main one.
-                    app.run(&exe_path, prf_path, pre_wait).await;
+                    if pre_wait {
+                        sleep(sleep_duration).await;
+                    }
+
+                    app.run(&exe_path, prf_path).await;
                 }));
             }
         }
@@ -207,7 +214,7 @@ fn find_exe_path(name: &str) -> Option<PathBuf> {
 
 impl AppLauncher {
     /// Lanch the application detached from the current process
-    async fn run(&self, exe_path: &Path, prf_folder: PathBuf, pre_wait: bool) {
+    async fn run(&self, exe_path: &Path, prf_folder: PathBuf) {
         #[cfg(target_os = "windows")]
         let mut command = {
             let is_lnk = exe_path
@@ -256,9 +263,6 @@ impl AppLauncher {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .stdin(Stdio::null());
-        }
-        if pre_wait {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
 
         debug!("Starting application: {:?}", command);
@@ -693,12 +697,12 @@ mod tests {
         let config_file = get_app_launchers(&PathBuf::from("test.toml"));
         let mut expected = IndexSet::new();
         expected.insert(AppLauncher {
-            name: "Euroscope".to_string(),
+            name: "EuroScope".to_string(),
             args: vec![],
             prf: Some(PathBuf::from("enor_rads.prf")),
         });
         expected.insert(AppLauncher {
-            name: "Euroscope".to_string(),
+            name: "EuroScope".to_string(),
             args: vec![],
             prf: Some(PathBuf::from("enor_gnd.prf")),
         });
