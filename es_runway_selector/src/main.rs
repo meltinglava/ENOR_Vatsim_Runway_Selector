@@ -119,6 +119,7 @@ async fn run() -> ApplicationResult<()> {
 
 fn main() -> ApplicationResult<()> {
     tracing_subscriber::fmt::init();
+    info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) {
         match update() {
             Ok(_) => (),
