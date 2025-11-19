@@ -174,11 +174,11 @@ impl Airports {
         for airport in self.airports.values_mut() {
             if let Some(runway) = defaults.get(airport.icao.as_str()) {
                 let identifier = format!("{runway:02}");
-                if airport
-                    .runways
-                    .iter()
-                    .any(|rw| rw.runways.iter().any(|dir| dir.identifier == identifier))
-                {
+                if airport.runways.iter().any(|rw| {
+                    rw.runways
+                        .iter()
+                        .any(|dir| dir.identifier[0..2] == identifier)
+                }) {
                     airport.runways_in_use.insert(
                         RunwayInUseSource::Default,
                         [(identifier, RunwayUse::Both)].into(),
