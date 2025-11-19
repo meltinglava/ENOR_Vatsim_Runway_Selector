@@ -5,6 +5,7 @@ use encoding::{
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use tabled::builder::Builder;
+use tracing::warn;
 use tracing_unwrap::ResultExt;
 
 use std::{
@@ -171,13 +172,20 @@ impl Airports {
     pub fn apply_default_runways(&mut self, config: &ESConfig) {
         let defaults = config.get_default_runways();
         for airport in self.airports.values_mut() {
-            if airport.runways_in_use.is_empty()
-                && let Some(runway) = defaults.get(airport.icao.as_str())
-            {
-                airport.runways_in_use.insert(
-                    RunwayInUseSource::Default,
-                    [(format!("{runway:02}"), RunwayUse::Both)].into(),
-                );
+            if let Some(runway) = defaults.get(airport.icao.as_str()) {
+                let identifier = format!("{runway:02}");
+                if airport
+                    .runways
+                    .iter()
+                    .any(|rw| rw.runways.iter().any(|dir| dir.identifier == identifier))
+                {
+                    airport.runways_in_use.insert(
+                        RunwayInUseSource::Default,
+                        [(identifier, RunwayUse::Both)].into(),
+                    );
+                } else {
+                    warn!(airport.icao, default_runway = %runway, "Default runway not found in airport runways");
+                }
             }
         }
     }
