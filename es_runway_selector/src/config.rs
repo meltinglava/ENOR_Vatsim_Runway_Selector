@@ -526,7 +526,7 @@ fn write_runway_file<T: Write>(
     let mut writer = BufWriter::new(rwy_file);
     writeln!(writer, "{}", start_of_file)?;
 
-    for airport in airports.airports.values() {
+    'airport_loop: for airport in airports.airports.values() {
         if airport.runways.is_empty() {
             warn!("No runways for airport {}", airport.icao);
             continue;
@@ -538,16 +538,17 @@ fn write_runway_file<T: Write>(
                 Some(s) => s,
             };
             for (runway, usage) in selection {
-                let flags = match usage {
-                    RunwayUse::Departing => vec![1],
-                    RunwayUse::Arriving => vec![0],
-                    RunwayUse::Both => vec![1, 0],
+                let flags: &[u8] = match usage {
+                    RunwayUse::Departing => &[1],
+                    RunwayUse::Arriving => &[0],
+                    RunwayUse::Both => &[1, 0],
                 };
 
                 for flag in flags {
                     writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
                 }
             }
+            continue 'airport_loop;
         }
     }
 
