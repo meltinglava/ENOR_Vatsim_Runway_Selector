@@ -97,13 +97,8 @@ async fn run() -> ApplicationResult<()> {
 
     let no_runways_in_use = airports.airports_without_runway_config();
     for airport in no_runways_in_use {
-        match &airport.metar {
-            Some(metar) => {
-                warn!(airport.icao, metar = ?metar.raw, ?airport.runways, "No runway selected for:")
-            }
-            None => {
-                warn!(airport.icao, metar = "No METAR / unparsable metar", ?airport.runways, "No runway selected for:")
-            }
+        if airport.metar.is_none() {
+            warn!(airport.icao, metar = "No METAR / unparsable metar", ?airport.runways, "No runway selected for:")
         }
     }
     println!();
