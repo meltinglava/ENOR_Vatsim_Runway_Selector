@@ -28,4 +28,6 @@ pub(crate) enum ApplicationError {
     SelfUpdateError(#[from] SelfUpdateError),
     #[error("Join error: {0}")]
     AsyncJoinError(#[from] JoinError),
+    #[error("VatsimUtil error: {0}")]
+    VatsimUtilError(#[from] vatsim_utils::errors::VatsimUtilError),
 }

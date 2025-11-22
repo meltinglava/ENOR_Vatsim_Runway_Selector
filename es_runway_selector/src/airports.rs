@@ -99,43 +99,23 @@ impl Airports {
 
     pub async fn read_atises_and_apply_runways(&mut self) -> ApplicationResult<()> {
         let icaos = self.identifiers();
-        let data = reqwest::get("https://data.vatsim.net/v3/vatsim-data.json")
+        let v3_data = vatsim_utils::live_api::Vatsim::new()
             .await?
-            .json::<serde_json::Value>()
+            .get_v3_data()
             .await?;
-
-        let serde_json::Value::Object(map) = data else {
-            return Ok(());
-        };
-        let Some(serde_json::Value::Array(atises)) = map.get("atis") else {
-            return Ok(());
-        };
-
+        let atises = v3_data.atis;
         for atis in atises {
-            let serde_json::Value::Object(atis) = atis else {
-                continue;
-            };
-            let Some(serde_json::Value::String(callsign)) = atis.get("callsign") else {
-                continue;
-            };
-            let icao = &callsign[0..4];
-
+            let icao = &atis.callsign[0..4];
             if !icaos.contains(icao) {
                 continue;
             }
-
+            let Some(atis_lines) = atis.text_atis else {
+                continue;
+            };
             let Some(airport) = self.airports.get_mut(icao) else {
                 continue;
             };
-            let Some(serde_json::Value::Array(atis_lines)) = atis.get("text_atis") else {
-                continue;
-            };
-
-            let text = atis_lines
-                .iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            let text = atis_lines.into_iter().collect::<Vec<_>>().join(" ");
             for (runway, config) in find_runway_in_use_from_atis(&text) {
                 airport
                     .runways_in_use
