@@ -3960,8 +3960,9 @@ dependencies = [
 
 [[package]]
 name = "vatsim_utils"
-version = "0.5.5"
-source = "git+https://github.com/meltinglava/vatsim_utils.git#fcd21492b655738ba72e186b73977e951d99c9b1"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59e020c4354f8486d4c8f469af3f0033ba708658471228c8a3bfde6b4569a642"
 dependencies = [
  "http",
  "log",
