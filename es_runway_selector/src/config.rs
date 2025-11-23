@@ -29,6 +29,11 @@ use crate::{
     airport::RunwayInUseSource, airports::Airports, error::ApplicationResult, runway::RunwayUse,
 };
 
+pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
+    ProjectDirs::from("", "meltinglava", "es_runway_selector")
+        .expect("Failed to get project directories")
+}
+
 #[derive(Debug)]
 pub(crate) struct ESConfig {
     euroscope_config_folder: PathBuf,
@@ -484,10 +489,7 @@ pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
 }
 
 fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), ConfigError> {
-    let config_dir = ProjectDirs::from("", "meltinglava", "es_runway_selector")
-        .expect("Failed to get project directories")
-        .config_dir()
-        .to_path_buf();
+    let config_dir = es_runway_selector_project_dir().config_dir().to_path_buf();
 
     let mut raw_config_file = Cow::Borrowed(include_str!("../config.toml"));
     let config_file = config_dir.join("config.toml");
@@ -526,17 +528,11 @@ fn write_runway_file<T: Write>(
     let mut writer = BufWriter::new(rwy_file);
     writeln!(writer, "{}", start_of_file)?;
 
-    'airport_loop: for airport in airports.airports.values() {
-        if airport.runways.is_empty() {
-            warn!("No runways for airport {}", airport.icao);
-            continue;
-        }
-
-        for selection_method in RunwayInUseSource::default_sort_order() {
-            let selection = match airport.runways_in_use.get(&selection_method) {
-                None => continue,
-                Some(s) => s,
-            };
+    for airport in airports.airports.values() {
+        if let Some(selection) = RunwayInUseSource::default_sort_order()
+            .iter()
+            .find_map(|method| airport.runways_in_use.get(method))
+        {
             for (runway, usage) in selection {
                 let flags: &[u8] = match usage {
                     RunwayUse::Departing => &[1],
@@ -548,7 +544,6 @@ fn write_runway_file<T: Write>(
                     writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
                 }
             }
-            continue 'airport_loop;
         }
     }
 
