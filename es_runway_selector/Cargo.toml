@@ -31,6 +31,7 @@ thiserror = "2.0.17"
 tokio = { workspace = true }
 toml = { version = "0.9.8", features = ["preserve_order"] }
 tracing = { workspace = true }
+tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
 vatsim_utils = "0.5.5"

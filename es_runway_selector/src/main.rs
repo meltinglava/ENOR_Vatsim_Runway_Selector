@@ -7,17 +7,25 @@ pub(crate) mod metar;
 pub(crate) mod runway;
 pub(crate) mod util;
 
-use std::{fs::File, sync::Arc};
+use std::{
+    fs::File,
+    path::Path,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use airports::Airports;
 use clap::Parser;
 use config::ESConfig;
 use error::ApplicationResult;
+use jiff::{Zoned, tz::TimeZone};
 use self_update::{
     Status::{UpToDate, Updated},
     cargo_crate_version,
 };
 use tracing::{info, trace, warn};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_unwrap::OptionExt;
 
 #[derive(clap::Parser, Debug)]
@@ -112,8 +120,79 @@ async fn run() -> ApplicationResult<()> {
     Ok(())
 }
 
+pub fn setup_logging() -> std::io::Result<WorkerGuard> {
+    let log_dir = config::es_runway_selector_project_dir()
+        .data_dir()
+        .join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+
+    // Clean up log files older than 14 days
+    cleanup_old_logs(&log_dir, 14)?;
+
+    // Timestamp in Zulu (UTC)
+    let now_utc = Zoned::now().with_time_zone(TimeZone::UTC);
+    let ts_str = now_utc.strftime("%Y%m%d-%H%M%SZ");
+
+    let file_name = format!("es_runway_selector-{ts_str}.json");
+    let file_path = log_dir.join(file_name);
+
+    let file = std::fs::File::create(file_path)?;
+    let (non_blocking, guard) = tracing_appender::non_blocking(file);
+
+    // Stdout logger controlled by RUST_LOG
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        // filter MUST be last so we still have access to the fmt::Layer methods above
+        .with_filter(EnvFilter::from_default_env());
+
+    // JSON logger to timestamped file, has its own filter
+    let json_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(non_blocking)
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
+        // again, filter last
+        .with_filter(EnvFilter::new("info,es_runway_selector=trace"));
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(json_layer)
+        .try_init()
+        .expect("Failed to initialize logging subscriber");
+
+    Ok(guard)
+}
+
+fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
+    let max_age = Duration::from_secs(max_age_days * 24 * 60 * 60);
+    let cutoff = SystemTime::now()
+        .checked_sub(max_age)
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        let metadata = entry.metadata()?;
+        if let Ok(modified) = metadata.modified()
+            && modified < cutoff
+        {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> ApplicationResult<()> {
-    tracing_subscriber::fmt::init();
+    let _guard = setup_logging().expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) {
         match update() {
