@@ -34,6 +34,10 @@ struct Cli {
     #[clap(long, short)]
     /// Resets the config file (but keeps the es folder information)
     clean_config: bool,
+    #[clap(long, short)]
+    /// Sets custom logging level for debugging for the json logs.
+    /// (RUST_LOG env var still controls stdout)
+    log_level: Option<String>,
 }
 
 fn get_target() -> &'static str {
@@ -73,8 +77,7 @@ fn update() -> ApplicationResult<bool> {
     })
 }
 
-async fn run() -> ApplicationResult<()> {
-    let cli = Cli::parse();
+async fn run(cli: Cli) -> ApplicationResult<()> {
     let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
@@ -120,7 +123,7 @@ async fn run() -> ApplicationResult<()> {
     Ok(())
 }
 
-pub fn setup_logging() -> std::io::Result<WorkerGuard> {
+pub fn setup_logging(log_level: Option<&str>) -> std::io::Result<WorkerGuard> {
     let log_dir = config::es_runway_selector_project_dir()
         .data_dir()
         .join("logs");
@@ -155,7 +158,9 @@ pub fn setup_logging() -> std::io::Result<WorkerGuard> {
         .with_thread_ids(true)
         .with_thread_names(true)
         // again, filter last
-        .with_filter(EnvFilter::new("info,es_runway_selector=trace"));
+        .with_filter(EnvFilter::new(
+            log_level.unwrap_or("info,es_runway_selector=trace"),
+        ));
 
     tracing_subscriber::registry()
         .with(stdout_layer)
@@ -192,7 +197,8 @@ fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
 }
 
 fn main() -> ApplicationResult<()> {
-    let _guard = setup_logging().expect("failed to set up logging");
+    let cli = Cli::parse();
+    let _guard = setup_logging(cli.log_level.as_deref()).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) {
         match update() {
@@ -204,6 +210,6 @@ fn main() -> ApplicationResult<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run())?;
+        .block_on(run(cli))?;
     Ok(())
 }
