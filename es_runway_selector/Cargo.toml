@@ -34,7 +34,7 @@ tracing = { workspace = true }
 tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
-vatsim_utils = "0.5.5"
+vatsim_utils = { git = "https://github.com/meltinglava/vatsim_utils.git", features = ["rustls-tls"] }
 walkdir = "2.5.0"
 whoami = "1.6.1"
 
