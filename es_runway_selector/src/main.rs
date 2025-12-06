@@ -26,7 +26,7 @@ use self_update::{
 use tracing::{info, trace, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
-use tracing_unwrap::OptionExt;
+use tracing_unwrap::{OptionExt, ResultExt};
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -96,7 +96,7 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     airports.sort();
     config
         .write_runways_to_euroscope_rwy_file(&airports)
-        .unwrap();
+        .unwrap_or_log();
     let task2 = tokio::spawn(async move {
         let handles = config.run_apps(true).await;
         for handle in handles {
