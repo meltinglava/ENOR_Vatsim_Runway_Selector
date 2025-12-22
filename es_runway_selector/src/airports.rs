@@ -139,7 +139,10 @@ impl Airports {
 
     pub fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
         for airport in self.airports.values_mut() {
-            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind(config)
+            if airport.icao == "ENGM" {
+                let (source, runway_in_use) = airport.set_runway_for_engm(config).unwrap_or_log();
+                airport.runways_in_use.insert(source, runway_in_use);
+            } else if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind()
                 && !runways_in_use.is_empty()
             {
                 airport

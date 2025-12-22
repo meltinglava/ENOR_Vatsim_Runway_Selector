@@ -50,19 +50,14 @@ enum EngmModes {
 }
 
 impl Airport {
-    pub fn set_runway_based_on_metar_wind(
-        &self,
-        config: &ESConfig,
-    ) -> ApplicationResult<IndexMap<String, RunwayUse>> {
+    pub fn set_runway_based_on_metar_wind(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
         if self.icao == "ENGM" {
-            self.set_runway_for_engm(config)
+            unreachable!("ENGM should be dealt with before reaching this step")
         } else if self.icao == "ENZV" {
             self.set_runway_for_enzv()
         } else if self.runways.len() == 1 {
             self.internal_set_runway_based_on_metar_wind(0)
                 .ok_or(ApplicationError::NoRunwayToSet)
-        } else if self.icao == "ENVR" {
-            Ok(IndexMap::new())
         } else {
             unreachable!(
                 "Airport {} has multiple runways, but no specific logic implemented for it",
@@ -113,13 +108,18 @@ impl Airport {
         None
     }
 
-    fn set_runway_for_engm(
+    pub(crate) fn set_runway_for_engm(
         &self,
         config: &ESConfig,
-    ) -> ApplicationResult<IndexMap<String, RunwayUse>> {
+    ) -> ApplicationResult<(RunwayInUseSource, IndexMap<String, RunwayUse>)> {
+        let source;
         let runway_direction: String = match self.internal_set_runway_based_on_metar_wind(0) {
-            Some(map) => map.keys().next().unwrap()[..2].to_string(),
+            Some(map) => {
+                source = RunwayInUseSource::Metar;
+                map.keys().next().unwrap()[..2].to_string()
+            }
             None => {
+                source = RunwayInUseSource::Default;
                 config
                     .get_default_runways()
                     .get(&self.icao)
@@ -174,7 +174,6 @@ impl Airport {
                     true
                 }
             }
-            // TODO: Handle statute miles visibility
 
             reported_vv = false; // TODO: Handle vertical visibility
         }
@@ -215,7 +214,7 @@ impl Airport {
                 map.insert(runway, RunwayUse::Both);
             }
         }
-        Ok(map)
+        Ok((source, map))
     }
 
     fn set_runway_for_enzv(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
