@@ -278,13 +278,9 @@ impl Airport {
 pub(crate) mod tests {
     use crate::airports::tests::make_test_airport;
 
-    use super::*;
-
     fn test_for_airport(metar: &str, expected_runway: &str) {
         let ap = make_test_airport(metar);
-        let a = ap
-            .set_runway_based_on_metar_wind(&ESConfig::new_for_test())
-            .unwrap();
+        let a = ap.set_runway_based_on_metar_wind().unwrap();
         assert_eq!(a.len(), 1);
         assert_eq!(a.keys().next().unwrap(), expected_runway);
     }
