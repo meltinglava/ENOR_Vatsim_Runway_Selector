@@ -40,6 +40,7 @@ ignore_airports = [
   "ENUL",
   "ENVE",
   "ENQC",  # bad autometars
+  "ENQR",  # bad autometars
   "ENOA",  # writes qnh without Q in metar
 ]
 
