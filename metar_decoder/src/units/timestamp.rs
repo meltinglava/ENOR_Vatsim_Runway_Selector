@@ -35,14 +35,17 @@ fn get_date_form_fields(cmp: &Zoned, day: i8, hour: i8, minute: i8) -> Zoned {
         .cmp(&cmp.day())
         .then_with(|| hour.cmp(&cmp.hour()))
         .then_with(|| minute.cmp(&cmp.minute()));
+
+    let mut year = cmp.year();
     let month = if ordering == std::cmp::Ordering::Less {
         cmp.month()
     } else if cmp.month() == 1 {
+        year -= 1;
         12
     } else {
         cmp.month() - 1
     };
-    date(cmp.year(), month, day)
+    date(year, month, day)
         .at(hour, minute, 0, 0)
         .to_zoned(cmp.time_zone().clone())
         .unwrap()
