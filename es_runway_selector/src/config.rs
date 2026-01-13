@@ -563,7 +563,7 @@ fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
     .chain({
         std::iter::once(PathBuf::from(format!(
             "/mnt/c/Users/{}/Documents/Euroscope/Euroscope_dev",
-            whoami::username()
+            whoami::username().unwrap_or_log(),
         )))
     })
     .collect_vec();

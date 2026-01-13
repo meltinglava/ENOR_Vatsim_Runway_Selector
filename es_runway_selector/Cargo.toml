@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 askama = "0.15.1"
 cargo-license = "0.7.0"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.54", features = ["derive"] }
 config = { version = "0.15.19", features = ["indexmap", "preserve_order"] }
 csv = "1.4.0"
 directories = "6.0.0"
@@ -32,20 +32,20 @@ tabled = "0.20.0"
 tempfile = "3.24.0"
 thiserror = "2.0.17"
 tokio = { workspace = true }
-toml = { version = "0.9.8", features = ["preserve_order"] }
+toml = { version = "0.9.11", features = ["preserve_order"] }
 tracing = { workspace = true }
 tracing-appender = "0.2.4"
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
-vatsim_utils = { version = "0.5.6", features = ["rustls-tls"] }
+vatsim_utils = { version = "0.6.0", features = ["rustls-tls"] }
 walkdir = "2.5.0"
-whoami = "1.6.1"
+whoami = "2.0.2"
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
-rfd = "0.16.0"
+rfd = "0.17.2"
 
 [target.'cfg(target_env = "musl")'.dependencies]
-ratatui = "0.29.0"
+ratatui = "0.30.0"
 ratatui-explorer = "0.2.1"
 crossterm = "0.29.0"
 
