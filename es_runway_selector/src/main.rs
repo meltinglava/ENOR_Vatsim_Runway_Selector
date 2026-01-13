@@ -115,6 +115,7 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     println!();
 
     airports.make_runway_report();
+    airports.make_runway_report_html()?;
 
     for task in tasks {
         task.await?;

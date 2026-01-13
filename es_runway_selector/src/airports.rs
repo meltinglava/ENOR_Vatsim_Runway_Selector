@@ -1,3 +1,4 @@
+use askama::Template;
 use encoding::{
     DecoderTrap, Encoding,
     all::{ISO_8859_1, UTF_8},
@@ -282,6 +283,117 @@ impl Airports {
         let table = builder.build();
         writeln!(writer, "{}", table)
     }
+
+    pub fn make_runway_report_html(&self) -> io::Result<()> {
+        let mut file = tempfile::NamedTempFile::with_prefix("runway_selector")?;
+        self.make_runway_report_html_with_writer(&mut file)?;
+        open::that_detached(dbg!(file.path()))?;
+        file.keep()?;
+        Ok(())
+    }
+
+    fn make_runway_report_html_with_writer<W: Write>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let mut counter = AirportsConfigReportData::new();
+
+        // Build the grouped report data (same logic as your table output)
+        'airport_loop: for airport in self.airports.values() {
+            for selection_source in RunwayInUseSource::default_sort_order() {
+                if let Some(runway_selection) = airport.runways_in_use.get(&selection_source) {
+                    counter
+                        .entry(Some(selection_source))
+                        .or_insert_with(|| Vec::with_capacity(1))
+                        .push((airport.icao.clone(), runway_selection.clone()));
+                    continue 'airport_loop;
+                }
+            }
+
+            // No runway config found for any source
+            counter
+                .entry(None)
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push((airport.icao.clone(), IndexMap::new()));
+        }
+
+        // Sort groups so None (no config) ends last; otherwise by RunwayInUseSource ordering
+        counter.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(k1), Some(k2)) => k1.cmp(k2),
+        });
+
+        // Convert to view model for the template
+        let view = self.build_runway_report_view(&counter);
+
+        // Render template
+        let tpl = RunwayReportTemplate {
+            groups: &view.groups,
+        };
+
+        let html = tpl
+            .render()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        writer.write_all(html.as_bytes())
+    }
+
+
+    fn build_runway_report_view(&self, data: &AirportsConfigReportData) -> RunwayReportView {
+        let mut groups = Vec::new();
+
+        for (source, configs) in data {
+            let (label, class) = match source {
+                Some(RunwayInUseSource::Atis) => ("ATIS", ""),
+                Some(RunwayInUseSource::Metar) => ("METAR", ""),
+                Some(RunwayInUseSource::Default) => ("fallback", ""),
+                None => ("No runway config", "none"),
+            };
+
+            let mut airports = Vec::with_capacity(configs.len());
+
+            for (icao, runways) in configs {
+                let runway_text = if runways.is_empty() {
+                    "(no selection)".to_string()
+                } else {
+                    runways
+                        .iter()
+                        .map(|(rw, usage)| {
+                            let suffix = match usage {
+                                RunwayUse::Arriving => " Arr",
+                                RunwayUse::Departing => " Dep",
+                                RunwayUse::Both => "",
+                            };
+                            format!("{rw}{suffix}")
+                        })
+                        .join(" + ")
+                };
+
+                let metar = self
+                    .airports
+                    .get(icao)
+                    .and_then(|a| a.metar.as_ref().map(|m| m.raw.clone()))
+                    .unwrap_or_else(|| format!("{icao} No METAR"));
+
+                airports.push(AirportRunwayView {
+                    icao: icao.clone(),
+                    runway_text,
+                    metar,
+                });
+            }
+
+            groups.push(RunwaySourceGroupView {
+                source_label: label.to_string(),
+                source_class: class.to_string(),
+                airports,
+            });
+        }
+
+        RunwayReportView { groups }
+    }
+
 }
 
 impl Index<&str> for Airports {
@@ -310,6 +422,32 @@ fn read_with_encoings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
             .decode(&buffer, DecoderTrap::Strict)
             .map_err(|_| crate::error::ApplicationError::EncodingError(e.to_string())),
     }
+}
+
+#[derive(Debug)]
+pub struct RunwayReportView {
+    pub groups: Vec<RunwaySourceGroupView>,
+}
+
+#[derive(Debug)]
+pub struct RunwaySourceGroupView {
+    pub source_label: String,     // "ATIS", "METAR", "fallback", "No runway config"
+    pub source_class: String,     // "", "none"
+    pub airports: Vec<AirportRunwayView>,
+}
+
+#[derive(Debug)]
+pub struct AirportRunwayView {
+    pub icao: String,
+    pub runway_text: String,     // "27 Arr + 09 Dep" or "(no selection)"
+    pub metar: String,
+}
+
+
+#[derive(Template)]
+#[template(path = "runway_report.html")]
+struct RunwayReportTemplate<'a> {
+    groups: &'a [RunwaySourceGroupView],
 }
 
 #[cfg(test)]
