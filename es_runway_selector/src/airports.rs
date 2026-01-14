@@ -285,7 +285,11 @@ impl Airports {
     }
 
     pub fn make_runway_report_html(&self) -> io::Result<()> {
-        let mut file = tempfile::NamedTempFile::with_prefix("runway_selector")?;
+        let mut file = tempfile::Builder::new()
+            .prefix("runways_")
+            .suffix(".html")
+            .rand_bytes(5)
+            .tempfile()?;
         self.make_runway_report_html_with_writer(&mut file)?;
         open::that_detached(file.path())?;
         file.keep()?;
