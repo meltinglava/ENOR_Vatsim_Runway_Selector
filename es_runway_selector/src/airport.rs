@@ -132,6 +132,8 @@ impl Airport {
         let mut rvr_reported = false;
         let mut visibility_below_5000 = false;
         let mut reported_vv = false;
+        let mut possible_deice_conditions = false;
+        let mut forced_deice_condition = false;
 
         if let Some(metar) = &self.metar
             && let Obscuration::Described(described_obscuration) = &metar.obscuration
@@ -153,19 +155,13 @@ impl Airport {
                 })
                 .any(|cloud| {
                     if let OptionalData::Data(height) = &cloud.height {
-                        height.height < 500 // Ceiling below 500 feet
+                        height.height < 15 // Ceiling below 1500 feet
                     } else {
-                        true // If height is undefined, we assume its below 500 feet
+                        true // If height is undefined, we assume its below 1500 feet
                     }
                 });
 
-            rvr_reported = described_obscuration.rvr.iter().any(|rvr| {
-                if let OptionalData::Data(value) = rvr.value {
-                    value < 1000
-                } else {
-                    true
-                }
-            });
+            rvr_reported = !described_obscuration.rvr.is_empty();
 
             if let VisibilityUnit::Meters(data) = described_obscuration.visibility.value {
                 visibility_below_5000 = if let OptionalData::Data(value) = data {
@@ -175,7 +171,32 @@ impl Airport {
                 }
             }
 
-            reported_vv = false; // TODO: Handle vertical visibility
+            reported_vv = described_obscuration.vertical_visibility.is_some();
+
+            forced_deice_condition = described_obscuration
+                .present_weather
+                .iter()
+                .cloned()
+                .flat_map(|pw| pw.descriptor)
+                .any(|descriptor| descriptor == metar_decoder::obscuration::Qualifier::Freezing);
+
+            let contender_for_deice = described_obscuration
+                .present_weather
+                .iter()
+                .cloned()
+                .flat_map(|pw| pw.phenomena)
+                .any(|phenomenon| {
+                    use metar_decoder::obscuration::WeatherPhenomenon::*;
+                    phenomenon.to_option().is_some_and(|p| match p {
+                        DZ | RA | SN | SG | PL | GR | GS | UP | BR | FG => true,
+                        FU | VA | DU | SA | HZ | PO | SQ | FC | SS | DS => false,
+                    })
+                });
+
+            possible_deice_conditions = match metar.temprature.temp {
+                OptionalData::Undefined => contender_for_deice,
+                OptionalData::Data(temp) => temp < 5 && contender_for_deice,
+            }
         }
 
         let now = Zoned::now()
@@ -185,7 +206,13 @@ impl Airport {
             EngmModes::Segregated
         } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo")? > now {
             EngmModes::Single // could be segregated / mixed if weather is bad, but currently out of scope
-        } else if ceiling_for_lvp || rvr_reported || visibility_below_5000 || reported_vv {
+        } else if ceiling_for_lvp
+            || rvr_reported
+            || visibility_below_5000
+            || reported_vv
+            || possible_deice_conditions
+            || forced_deice_condition
+        {
             EngmModes::Segregated
         } else {
             EngmModes::Mixed
