@@ -11,9 +11,8 @@ pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
     static SINGLE_PRE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\bRUNWAY IN USE ([0-9]{2}[LRC]*)\b").unwrap());
 
-    static ARR: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\bAPPROACH (?:RWY|RUNWAY) ([0-9]{2}[LRC]*)\b").unwrap()
-    });
+    static ARR: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\bAPPROACH (?:RWY|RUNWAY) ([0-9]{2}[LRC]*)\b").unwrap());
 
     static DEP: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\bDEPARTURE RUNWAY ([0-9]{2}[LRC]*)\b").unwrap());
@@ -87,14 +86,13 @@ fn upsert(map: &mut IndexMap<String, RunwayUse>, rwy: &str, new_use: RunwayUse) 
             let merged = match (*e.get(), new_use) {
                 (RunwayUse::Both, _) | (_, RunwayUse::Both) => RunwayUse::Both,
                 (RunwayUse::Arriving, RunwayUse::Departing)
-                    | (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
+                | (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
                 (existing, _) => existing,
             };
             e.insert(merged);
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -114,7 +112,12 @@ mod tests {
     fn test_engm_single_atis() {
         let atis = "OSLO GARDERMOEN INFORMATION LIMA .. TIME 1550 .. EXPECT ILS OR RNP APPROACH RUNWAY 01R .. DEPARTURE RUNWAY 01L IN USE .. RCR RWY 01L AT TIME 1427 .. RWYCC 3/3/3 .. 100 PERCENT 06 MM DRY SNOW .. RCR RWY 01R AT TIME 1429 .. RWYCC 3/3/3 .. 100 PERCENT 04 MM DRY SNOW .. TRANSITION LEVEL 85 .. FOR CLEARANCE AND START UP, CONTACT POLARIS CONTROL 121.550 .. MET REPORT .. WIND 020 DEGREES 3 KNOTS .. VISIBILITY 6 KM .. CLOUDS SCT 700 FT BKN 1500 FT .. LIGHT SNOW .. TMP -4 DP -5 .. QNH 1010 .. ACKNOWLEDGE INFORMATION LIMA ON FIRST CONTACT.";
         let a = find_runway_in_use_from_atis(atis);
-        let expected = [("01L".to_owned(), RunwayUse::Departing), ("01R".to_owned(), RunwayUse::Arriving)].into_iter().collect_vec();
+        let expected = [
+            ("01L".to_owned(), RunwayUse::Departing),
+            ("01R".to_owned(), RunwayUse::Arriving),
+        ]
+        .into_iter()
+        .collect_vec();
         let actual = a.into_iter().sorted_by_key(|n| n.0.clone()).collect_vec();
         assert_eq!(actual, expected);
     }

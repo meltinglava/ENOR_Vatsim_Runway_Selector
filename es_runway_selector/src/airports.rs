@@ -296,10 +296,7 @@ impl Airports {
         Ok(())
     }
 
-    fn make_runway_report_html_with_writer<W: Write>(
-        &self,
-        writer: &mut W,
-    ) -> io::Result<()> {
+    fn make_runway_report_html_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let mut counter = AirportsConfigReportData::new();
 
         // Build the grouped report data (same logic as your table output)
@@ -337,13 +334,10 @@ impl Airports {
             groups: &view.groups,
         };
 
-        let html = tpl
-            .render()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let html = tpl.render().map_err(io::Error::other)?;
 
         writer.write_all(html.as_bytes())
     }
-
 
     fn build_runway_report_view(&self, data: &AirportsConfigReportData) -> RunwayReportView {
         let mut groups = Vec::new();
@@ -397,7 +391,6 @@ impl Airports {
 
         RunwayReportView { groups }
     }
-
 }
 
 impl Index<&str> for Airports {
@@ -435,18 +428,17 @@ pub struct RunwayReportView {
 
 #[derive(Debug)]
 pub struct RunwaySourceGroupView {
-    pub source_label: String,     // "ATIS", "METAR", "fallback", "No runway config"
-    pub source_class: String,     // "", "none"
+    pub source_label: String, // "ATIS", "METAR", "fallback", "No runway config"
+    pub source_class: String, // "", "none"
     pub airports: Vec<AirportRunwayView>,
 }
 
 #[derive(Debug)]
 pub struct AirportRunwayView {
     pub icao: String,
-    pub runway_text: String,     // "27 Arr + 09 Dep" or "(no selection)"
+    pub runway_text: String, // "27 Arr + 09 Dep" or "(no selection)"
     pub metar: String,
 }
-
 
 #[derive(Template)]
 #[template(path = "runway_report.html")]
