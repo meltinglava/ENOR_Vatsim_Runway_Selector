@@ -8,3 +8,6 @@ prf = "enor_gnd.prf"
 
 [[executable]]
 name = "TrackAudio"
+
+[[executable]]
+name = "vacs"
