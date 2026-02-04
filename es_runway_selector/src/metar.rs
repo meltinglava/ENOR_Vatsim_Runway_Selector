@@ -7,6 +7,7 @@ use metar_decoder::{
     units::{track::Track, velocity::WindVelocity},
     wind::Wind,
 };
+use tracing_unwrap::ResultExt;
 
 use crate::{config::ESConfig, error::ApplicationResult, util::diff_angle};
 
@@ -17,20 +18,49 @@ pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
         "https://metar.vatsim.net/ESKS",
     ];
 
-    let pages =
-        try_join_all(urls.iter().map(async |&url| -> reqwest::Result<String> {
-            reqwest::get(url).await?.text().await
-        }))
-        .await?;
+    let pages = try_join_all(urls.iter().map(async |url| get_metars_from_url(url).await)).await?;
 
     let values = pages
         .iter()
         .flat_map(|s| s.lines())
         .filter(|line| !ignore.contains(&line[0..4]))
         .map(Metar::from_str)
-        .filter_map(Result::ok)
+        .filter_map(Result::ok_or_log)
         .collect();
     Ok(values)
+}
+
+#[tracing::instrument]
+async fn get_metars_from_url(url: &str) -> ApplicationResult<String> {
+    let retries = 3;
+    let mut first_error = None;
+    for _ in 0..retries {
+        let resp = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_log()
+            .get(url)
+            .send()
+            .await;
+
+        match resp {
+            Ok(resp) => {
+                let text = resp.text().await;
+                match text {
+                    Ok(text) => return Ok(text),
+                    Err(e) => {
+                        tracing::error!("Failed to get text from {}: {}", url, e);
+                        first_error.get_or_insert(e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to get {}: {}", url, e);
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    Err(first_error.unwrap().into())
 }
 
 pub fn calculate_max_crosswind(
