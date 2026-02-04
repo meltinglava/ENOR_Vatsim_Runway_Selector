@@ -160,7 +160,7 @@ pub fn setup_logging(log_level: Option<&str>) -> std::io::Result<WorkerGuard> {
         .with_thread_names(true)
         // again, filter last
         .with_filter(EnvFilter::new(
-            log_level.unwrap_or("info,es_runway_selector=trace"),
+            log_level.unwrap_or("info,es_runway_selector=trace,reqwest=debug"),
         ));
 
     tracing_subscriber::registry()
