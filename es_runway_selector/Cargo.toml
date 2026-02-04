@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-askama = "0.15.1"
+askama = "0.15.4"
 cargo-license = "0.7.0"
-clap = { version = "4.5.54", features = ["derive"] }
+clap = { version = "4.5.57", features = ["derive"] }
 config = { version = "0.15.19", features = ["indexmap", "preserve_order"] }
 csv = "1.4.0"
 directories = "6.0.0"
@@ -22,7 +22,7 @@ jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
 nom = { workspace = true }
 open = "5.3.3"
-regex = "1.12.2"
+regex = "1.12.3"
 reqwest = { workspace = true }
 self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rustls", "archive-tar"], default-features = false }
 serde = { workspace = true }
@@ -30,7 +30,7 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 tabled = "0.20.0"
 tempfile = "3.24.0"
-thiserror = "2.0.17"
+thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { version = "0.9.11", features = ["preserve_order"] }
 tracing = { workspace = true }
@@ -39,21 +39,21 @@ tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
 vatsim_utils = { version = "0.6.0", features = ["rustls-tls"] }
 walkdir = "2.5.0"
-whoami = "2.0.2"
+whoami = "2.1.0"
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 rfd = "0.17.2"
 
 [target.'cfg(target_env = "musl")'.dependencies]
-ratatui = "0.29.0"
+ratatui = "0.30.0"
 ratatui-explorer = "0.2.1"
 crossterm = "0.29.0"
 
 [target.'cfg(windows)'.dependencies]
-sysinfo = { version = "0.37.2", features = ["windows", "serde"] }
+sysinfo = { version = "0.38.0", features = ["windows", "serde"] }
 
 [target.'cfg(not(windows))'.dependencies]
-sysinfo = { version = "0.37.2", features = ["serde"]}
+sysinfo = { version = "0.38.0", features = ["serde"]}
 
 [dev-dependencies]
 tracing-test = { workspace = true }
