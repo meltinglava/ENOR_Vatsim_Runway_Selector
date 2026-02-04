@@ -395,83 +395,11 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
 
 #[cfg(target_env = "musl")]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
-    config: &mut Configurable,
-    config_file_path: &P,
+    _config: &mut Configurable,
+    _config_file_path: &P,
 ) -> Option<(PathBuf, String)> {
-    use crossterm::terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    };
-    use ratatui::{
-        Terminal,
-        backend::CrosstermBackend,
-        crossterm::event::{self, Event, KeyCode},
-    };
-    use ratatui_explorer::{File, FileExplorer};
-
-    use std::io::Stdout;
-
-    fn pick_folder() -> io::Result<Option<PathBuf>> {
-        use crossterm::ExecutableCommand;
-
-        enable_raw_mode()?;
-        io::stdout().execute(EnterAlternateScreen)?;
-        let backend = CrosstermBackend::new(io::stdout());
-        let mut terminal: Terminal<CrosstermBackend<Stdout>> = Terminal::new(backend)?;
-
-        let mut explorer = FileExplorer::new()?;
-        // Start in XDG config dir (or fall back to home) using `directories`
-        if let Some(bd) = BaseDirs::new() {
-            let start = bd.config_dir();
-            let _ = explorer.set_cwd(start);
-        }
-
-        let chosen = loop {
-            terminal.draw(|f| {
-                let area = f.area();
-                f.render_widget(&explorer.widget(), area);
-            })?;
-
-            let event = event::read()?;
-            if let Event::Key(key) = &event
-                && key.code == KeyCode::Enter
-            {
-                let current: &File = explorer.current();
-                let path = if current.is_dir() {
-                    current.path().to_path_buf()
-                } else {
-                    current
-                        .path()
-                        .parent()
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or_else(|| PathBuf::from("/"))
-                };
-                break Some(path);
-            }
-            let _ = explorer.handle(&event);
-        };
-
-        disable_raw_mode()?;
-        io::stdout().execute(LeaveAlternateScreen)?;
-        Ok(chosen)
-    }
-
-    let selected = match pick_folder() {
-        Ok(Some(p)) => p,
-        Ok(None) => return None,
-        Err(err) => {
-            eprintln!("Error in file explorer: {err}");
-            return None;
-        }
-    };
-
-    config.euroscope_config_folder = Some(selected.clone());
-    if let Ok(serialized) = toml::to_string_pretty(&config)
-        && let Err(e) = fs::write(config_file_path, serialized)
-    {
-        eprintln!("Failed to write config file: {e}");
-    }
-
-    search_for_ese_with_possibilities(&[selected])
+    warn!("Running in a musl environment, cannot query user for Euroscope config folder.");
+    None
 }
 
 #[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
