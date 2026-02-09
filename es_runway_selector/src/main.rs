@@ -38,7 +38,7 @@ struct Cli {
     /// Sets custom logging level for debugging for the json logs.
     /// (RUST_LOG env var still controls stdout)
     log_level: Option<String>,
-    #[clap(hide = true)]
+    #[clap(long, hide = true)]
     previous_log_path: Option<PathBuf>,
 }
 
