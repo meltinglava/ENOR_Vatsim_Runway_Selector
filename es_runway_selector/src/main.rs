@@ -9,7 +9,7 @@ pub(crate) mod util;
 
 use std::{
     fs::File,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -38,6 +38,8 @@ struct Cli {
     /// Sets custom logging level for debugging for the json logs.
     /// (RUST_LOG env var still controls stdout)
     log_level: Option<String>,
+    #[clap(hide = true)]
+    previous_log_path: Option<PathBuf>,
 }
 
 fn get_target() -> &'static str {
@@ -123,23 +125,28 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     Ok(())
 }
 
-pub fn setup_logging(log_level: Option<&str>) -> std::io::Result<WorkerGuard> {
+fn setup_logging(cli: &Cli) -> std::io::Result<(PathBuf, WorkerGuard)> {
     let log_dir = config::es_runway_selector_project_dir()
         .data_dir()
         .join("logs");
     std::fs::create_dir_all(&log_dir)?;
 
-    // Clean up log files older than 14 days
-    cleanup_old_logs(&log_dir, 14)?;
+    let file_path = match &cli.previous_log_path {
+        Some(path) => path.to_path_buf(),
+        None => {
+            // Clean up log files older than 14 days
+            cleanup_old_logs(&log_dir, 14)?;
 
-    // Timestamp in Zulu (UTC)
-    let now_utc = Zoned::now().with_time_zone(TimeZone::UTC);
-    let ts_str = now_utc.strftime("%Y%m%d-%H%M%SZ");
+            // Timestamp in Zulu (UTC)
+            let now_utc = Zoned::now().with_time_zone(TimeZone::UTC);
+            let ts_str = now_utc.strftime("%Y%m%d-%H%M%SZ");
 
-    let file_name = format!("es_runway_selector-{ts_str}.json");
-    let file_path = log_dir.join(file_name);
+            let file_name = format!("es_runway_selector-{ts_str}.json");
+            log_dir.join(file_name)
+        }
+    };
 
-    let file = std::fs::File::create(file_path)?;
+    let file = std::fs::File::create(&file_path)?;
     let (non_blocking, guard) = tracing_appender::non_blocking(file);
 
     // Stdout logger controlled by RUST_LOG
@@ -159,7 +166,9 @@ pub fn setup_logging(log_level: Option<&str>) -> std::io::Result<WorkerGuard> {
         .with_thread_names(true)
         // again, filter last
         .with_filter(EnvFilter::new(
-            log_level.unwrap_or("info,es_runway_selector=trace,reqwest=debug"),
+            cli.log_level
+                .as_deref()
+                .unwrap_or("info,es_runway_selector=trace,reqwest=debug"),
         ));
 
     tracing_subscriber::registry()
@@ -168,7 +177,7 @@ pub fn setup_logging(log_level: Option<&str>) -> std::io::Result<WorkerGuard> {
         .try_init()
         .expect("Failed to initialize logging subscriber");
 
-    Ok(guard)
+    Ok((file_path, guard))
 }
 
 fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
@@ -198,11 +207,29 @@ fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
 
 fn main() -> ApplicationResult<()> {
     let cli = Cli::parse();
-    let _guard = setup_logging(cli.log_level.as_deref()).expect("failed to set up logging");
+    let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) {
         match update() {
-            Ok(_) => (),
+            Ok(_) => {
+                info!("Update check completed, restarting application to new version");
+                let mut args: Vec<String> = std::env::args().collect();
+                args.extend_from_slice(&[
+                    "--previous-log-path".to_string(),
+                    log_file_path.to_string_lossy().to_string(),
+                ]);
+                let mut result = std::process::Command::new(&args[0])
+                    .args(&args[1..])
+                    .spawn()
+                    .expect("Failed to restart application");
+                std::process::exit(
+                    result
+                        .wait()
+                        .expect("Failed to wait for new application")
+                        .code()
+                        .unwrap_or(-1),
+                );
+            }
             Err(e) => warn!("Update check failed: {0}, {0:?}", e),
         }
     }
