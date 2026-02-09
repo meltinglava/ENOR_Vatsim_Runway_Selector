@@ -138,7 +138,12 @@ impl Airports {
         Ok(())
     }
 
-    pub fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
+    pub fn select_runway_in_use(&mut self, config: &ESConfig) {
+        self.runway_in_use_based_on_metar(config);
+        self.apply_default_runways(config);
+    }
+
+    fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
         for airport in self.airports.values_mut() {
             if airport.icao == "ENGM" {
                 let (source, runway_in_use) = airport.set_runway_for_engm(config).unwrap_or_log();
@@ -153,24 +158,27 @@ impl Airports {
         }
     }
 
-    pub fn apply_default_runways(&mut self, config: &ESConfig) {
+    fn apply_default_runways(&mut self, config: &ESConfig) {
         let defaults = config.get_default_runways();
         for airport in self.airports.values_mut() {
-            if let Some(runway) = defaults.get(airport.icao.as_str()) {
-                let identifier = format!("{runway:02}");
-                if airport.runways.iter().any(|rw| {
-                    rw.runways
-                        .iter()
-                        .any(|dir| dir.identifier[0..2] == identifier)
-                }) {
-                    airport.runways_in_use.insert(
-                        RunwayInUseSource::Default,
-                        [(identifier, RunwayUse::Both)].into(),
-                    );
-                } else {
-                    warn!(airport.icao, default_runway = %runway, "Default runway not found in airport runways");
+            let default_entry = airport.runways_in_use.entry(RunwayInUseSource::Default);
+            match default_entry {
+                indexmap::map::Entry::Occupied(_) => continue,
+                indexmap::map::Entry::Vacant(v) => {
+                    if let Some(runway) = defaults.get(airport.icao.as_str()) {
+                        let identifier = format!("{runway:02}");
+                        if airport.runways.iter().any(|rw| {
+                            rw.runways
+                                .iter()
+                                .any(|dir| dir.identifier[0..2] == identifier)
+                        }) {
+                            v.insert([(identifier, RunwayUse::Both)].into());
+                        } else {
+                            warn!(airport.icao, default_runway = %runway, "Default runway not found in airport runways");
+                        }
+                    }
                 }
-            }
+            };
         }
     }
 
@@ -475,5 +483,44 @@ pub(crate) mod tests {
             runways: airport.runways,
             runways_in_use: IndexMap::new(),
         }
+    }
+
+    fn setup_test_airport_from_metar(metar: &str) -> Airport {
+        let ap = make_test_airport(metar);
+        let mut aps = Airports::new();
+        aps.add_airport(ap);
+        let config = ESConfig::new_for_test();
+        aps.select_runway_in_use(&config);
+        aps.airports.pop().unwrap().1
+    }
+
+    #[test]
+    fn test_engm_variable_to_segregated_name() {
+        let metar = "ENGM 080920Z VRB03KT 9999 -SHSN OVC009 M09/M12 Q1024 NOSIG";
+        let gm = setup_test_airport_from_metar(metar);
+        assert_eq!(
+            gm.runways_in_use,
+            IndexMap::from([(
+                RunwayInUseSource::Default,
+                [
+                    ("01L".to_string(), RunwayUse::Departing),
+                    ("01R".to_string(), RunwayUse::Arriving)
+                ]
+                .into()
+            )])
+        )
+    }
+
+    #[test]
+    fn test_metar_enmh() {
+        let metar = "ENMH 220550Z AUTO 30009KT 250V330 9999 BKN028/// OVC049/// 07/02 Q1016";
+        let airport = setup_test_airport_from_metar(metar);
+        assert_eq!(
+            airport.runways_in_use,
+            IndexMap::from([(
+                RunwayInUseSource::Metar,
+                [("35".to_string(), RunwayUse::Both)].into()
+            )])
+        );
     }
 }

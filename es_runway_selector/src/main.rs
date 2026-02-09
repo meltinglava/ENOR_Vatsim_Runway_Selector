@@ -91,8 +91,7 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     airports.fill_known_airports(&mut sct_file, &config)?;
     airports.add_metars(&config).await;
     airports.read_atises_and_apply_runways().await.unwrap();
-    airports.runway_in_use_based_on_metar(&config);
-    airports.apply_default_runways(&config);
+    airports.select_runway_in_use(&config);
     airports.sort();
     config
         .write_runways_to_euroscope_rwy_file(&airports)

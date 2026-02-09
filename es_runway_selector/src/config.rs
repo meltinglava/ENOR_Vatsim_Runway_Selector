@@ -635,6 +635,11 @@ mod tests {
             args: vec![],
             prf: None,
         });
+        expected.insert(AppLauncher {
+            name: "vacs".to_string(),
+            args: vec![],
+            prf: None,
+        });
         assert_eq!(config_file, expected);
     }
 }

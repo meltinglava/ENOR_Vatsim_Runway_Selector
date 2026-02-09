@@ -155,27 +155,10 @@ fn scale_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
 mod tests {
     use std::str::FromStr;
 
-    use crate::{
-        airport::{Airport, RunwayInUseSource},
-        airports::Airports,
-        config::ESConfig,
-        runway::RunwayUse,
-    };
+    use crate::{airport::Airport, airports::Airports, config::ESConfig};
 
     use super::*;
-    use indexmap::IndexMap;
     use metar_decoder::{units::velocity::VelocityUnit, wind::WindDirection};
-
-    fn make_test_airport(icao: &str, metar: &str) -> Airport {
-        let mut ap = Airports::new();
-        let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
-        let config = ESConfig::new_for_test();
-        ap.fill_known_airports(&mut reader, &config).unwrap();
-        let mut ap = ap.airports.swap_remove(icao).unwrap();
-        let metar = Metar::from_str(metar).unwrap();
-        ap.metar = Some(metar);
-        ap
-    }
 
     // #[test]
     // fn test_calculate_max_crosswind() {
@@ -229,22 +212,6 @@ mod tests {
     //         _ => panic!("Expected WindSpeed::Knot"),
     //     }
     // }
-
-    #[test]
-    fn test_metar_enmh() {
-        let metar = "ENMH 220550Z AUTO 30009KT 250V330 9999 BKN028/// OVC049/// 07/02 Q1016";
-        let airport = make_test_airport("ENMH", metar);
-        let mut airports = Airports::new();
-        airports.add_airport(airport);
-        airports.runway_in_use_based_on_metar(&ESConfig::new_for_test());
-        assert_eq!(
-            airports["ENMH"].runways_in_use,
-            IndexMap::from([(
-                RunwayInUseSource::Metar,
-                [("35".to_string(), RunwayUse::Both)].into()
-            )])
-        );
-    }
 
     #[allow(unused)]
     fn wind_kts_dir_knots(dir: u32, knots: u32) -> Wind {
