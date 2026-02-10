@@ -211,15 +211,17 @@ fn main() -> ApplicationResult<()> {
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) {
         match update() {
-            Ok(_) => {
+            Ok(true) => {
                 info!("Update check completed, restarting application to new version");
-                let mut args: Vec<String> = std::env::args().collect();
-                args.extend_from_slice(&[
+                let mut args = std::env::args();
+                let application = args.next().unwrap_or_log();
+                let mut args_for_next = vec![
                     "--previous-log-path".to_string(),
                     log_file_path.to_string_lossy().to_string(),
-                ]);
-                let mut result = std::process::Command::new(&args[0])
-                    .args(&args[1..])
+                ];
+                args_for_next.extend(args);
+                let mut result = std::process::Command::new(application)
+                    .args(&args_for_next)
                     .spawn()
                     .expect("Failed to restart application");
                 std::process::exit(
@@ -229,6 +231,9 @@ fn main() -> ApplicationResult<()> {
                         .code()
                         .unwrap_or(-1),
                 );
+            }
+            Ok(false) => {
+                info!("Update check completed, application is up to date");
             }
             Err(e) => warn!("Update check failed: {0}, {0:?}", e),
         }
