@@ -209,7 +209,7 @@ fn main() -> ApplicationResult<()> {
     let cli = Cli::parse();
     let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && cli.previous_log_path.is_none() {
         match update() {
             Ok(true) => {
                 info!("Update check completed, restarting application to new version");
