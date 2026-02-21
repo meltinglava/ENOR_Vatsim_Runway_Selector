@@ -114,9 +114,6 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
             warn!(airport.icao, metar = "No METAR / unparsable metar", ?airport.runways, "No runway selected for:")
         }
     }
-    println!();
-
-    airports.make_runway_report();
     airports.make_runway_report_html()?;
 
     for task in tasks {

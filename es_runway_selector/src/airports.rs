@@ -1,7 +1,6 @@
 use askama::Template;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use tabled::builder::Builder;
 use tracing::warn;
 use tracing_unwrap::ResultExt;
 
@@ -16,7 +15,7 @@ use crate::{
     config::ESConfig,
     error::ApplicationResult,
     metar::get_metars,
-    runway::RunwayUse,
+    runway::{RunwayDirection, RunwayUse},
     sector_file::load_airports_from_sct_runway_section,
 };
 
@@ -203,12 +202,11 @@ impl Airports {
         });
     }
 
-    fn source_label(source: Option<&RunwayInUseSource>, none_with_colon: bool) -> &'static str {
+    fn source_label(source: Option<&RunwayInUseSource>) -> &'static str {
         match source {
             Some(RunwayInUseSource::Atis) => "ATIS",
             Some(RunwayInUseSource::Metar) => "METAR",
             Some(RunwayInUseSource::Default) => "fallback",
-            None if none_with_colon => "No runway config:",
             None => "No runway config",
         }
     }
@@ -240,53 +238,46 @@ impl Airports {
             .unwrap_or_else(|| format!("{icao} No METAR"))
     }
 
-    pub(crate) fn make_runway_report(&self) {
-        let mut stdout = std::io::stdout().lock();
-        self.make_runway_report_with_writer(&mut stdout)
-            .expect("Failed to write runway report");
+    fn runway_direction_for_identifier<'a>(
+        airport: &'a Airport,
+        runway_identifier: &str,
+    ) -> Option<&'a RunwayDirection> {
+        airport
+            .runways
+            .iter()
+            .flat_map(|runway| runway.runways.iter())
+            .find(|direction| {
+                direction.identifier == runway_identifier
+                    || (runway_identifier.len() == 2
+                        && direction.identifier.starts_with(runway_identifier))
+            })
     }
 
-    fn make_runway_report_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let report_data = self.grouped_runway_config_report_data();
-        self.write_runway_report_tabled(writer, &report_data)?;
-        Ok(())
-    }
-
-    fn write_runway_report_tabled<W: Write>(
-        &self,
-        writer: &mut W,
-        data: &AirportsConfigReportData,
-    ) -> io::Result<()> {
-        let mut builder = Builder::default();
-        builder.push_record([
-            "Selection Source",
-            "Number of Airports",
-            "Airports and Runways",
-            "METAR",
-        ]);
-        for (source, configs) in data {
-            let source_str = Self::source_label(source.as_ref(), true);
-            let airports_str = configs
-                .iter()
-                .map(|(icao, runways)| {
-                    Self::format_runway_usage(runways)
-                        .map(|runways_str| format!("{icao}: {runways_str}"))
-                        .unwrap_or_else(|| icao.to_owned())
-                })
-                .join("\n");
-            let metars = configs
-                .iter()
-                .map(|(icao, _)| self.metar_text_for_airport(icao))
-                .join("\n");
-            builder.push_record([
-                source_str,
-                &configs.len().to_string(),
-                &airports_str,
-                &metars,
-            ]);
+    fn format_wind_components_for_selection(
+        airport: &Airport,
+        runways: &IndexMap<String, RunwayUse>,
+    ) -> String {
+        if runways.is_empty() {
+            return "(no selection)".to_string();
         }
-        let table = builder.build();
-        writeln!(writer, "{}", table)
+
+        runways
+            .keys()
+            .map(|runway| {
+                let components = Self::runway_direction_for_identifier(airport, runway)
+                    .and_then(|direction| airport.runway_wind_components(direction));
+
+                match components {
+                    Some(components) => format!(
+                        "{runway} H{}/T{} X{}",
+                        components.headwind.max(0),
+                        components.tailwind,
+                        components.crosswind
+                    ),
+                    None => format!("{runway} n/a"),
+                }
+            })
+            .join(" + ")
     }
 
     pub fn make_runway_report_html(&self) -> io::Result<()> {
@@ -321,7 +312,7 @@ impl Airports {
         let mut groups = Vec::new();
 
         for (source, configs) in data {
-            let label = Self::source_label(source.as_ref(), false);
+            let label = Self::source_label(source.as_ref());
             let class = Self::source_class(source.as_ref());
 
             let mut airports = Vec::with_capacity(configs.len());
@@ -329,11 +320,17 @@ impl Airports {
             for (icao, runways) in configs {
                 let runway_text = Self::format_runway_usage(runways)
                     .unwrap_or_else(|| "(no selection)".to_string());
+                let wind_text = self
+                    .airports
+                    .get(icao)
+                    .map(|airport| Self::format_wind_components_for_selection(airport, runways))
+                    .unwrap_or_else(|| "(missing airport)".to_string());
                 let metar = self.metar_text_for_airport(icao);
 
                 airports.push(AirportRunwayView {
                     icao: icao.clone(),
                     runway_text,
+                    wind_text,
                     metar,
                 });
             }
@@ -379,6 +376,7 @@ pub struct RunwaySourceGroupView {
 pub struct AirportRunwayView {
     pub icao: String,
     pub runway_text: String, // "27 Arr + 09 Dep" or "(no selection)"
+    pub wind_text: String,   // "27 H9/T0 X1 + 09 H0/T9 X1"
     pub metar: String,
 }
 

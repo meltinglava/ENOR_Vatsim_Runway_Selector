@@ -112,7 +112,8 @@
 
  /* column sizing */
  col.col-icao  { width: 7ch; }
- col.col-rwy   { width: 22ch; }
+ col.col-rwy   { width: 20ch; }
+ col.col-wind  { width: 26ch; }
  col.col-metar { width: auto; }
 </style>
 </head>
@@ -129,12 +130,14 @@
       <colgroup>
         <col class="col-icao">
         <col class="col-rwy">
+        <col class="col-wind">
         <col class="col-metar">
       </colgroup>
       <thead>
         <tr>
           <th>ICAO</th>
           <th>Runways</th>
+          <th>Wind Components</th>
           <th>METAR</th>
         </tr>
       </thead>
@@ -143,6 +146,7 @@
         <tr>
           <td class="icao">{{ a.icao }}</td>
           <td class="runways">{{ a.runway_text }}</td>
+          <td class="runways">{{ a.wind_text }}</td>
           <td class="metar">{{ a.metar }}</td>
         </tr>
         {% endfor %}

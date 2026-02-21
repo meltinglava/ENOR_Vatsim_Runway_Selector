@@ -28,7 +28,6 @@ self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rust
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
-tabled = "0.20.0"
 tempfile = "3.24.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
