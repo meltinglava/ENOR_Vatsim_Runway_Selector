@@ -1,15 +1,10 @@
 use std::str::FromStr;
 
 use futures::future::try_join_all;
-use metar_decoder::{
-    metar::Metar,
-    optional_data::OptionalData,
-    units::{track::Track, velocity::WindVelocity},
-    wind::Wind,
-};
+use metar_decoder::metar::Metar;
 use tracing_unwrap::ResultExt;
 
-use crate::{config::ESConfig, error::ApplicationResult, util::diff_angle};
+use crate::{config::ESConfig, error::ApplicationResult};
 
 pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
     let ignore = conf.get_ignore_airports();
@@ -63,98 +58,16 @@ async fn get_metars_from_url(url: &str) -> ApplicationResult<String> {
     Err(first_error.unwrap().into())
 }
 
-pub fn calculate_max_crosswind(
-    runway: &crate::runway::RunwayDirection,
-    wind: &Wind,
-) -> Option<i32> {
-    let track: u32 = runway.degrees as u32;
-
-    let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) =
-        wind.varying
-    {
-        let cross = [(track + 90) % 360, (track + 270) % 360];
-        let (start, end): (u32, u32) = (start % 360, end % 360);
-
-        let includes = |a| {
-            if start <= end {
-                a >= start && a <= end
-            } else {
-                a >= start || a <= end
-            }
-        };
-
-        if cross.iter().any(|&a| includes(a)) {
-            1.0
-        } else {
-            let s: f64 = diff_angle(track, start).into();
-            let e: f64 = diff_angle(track, end).into();
-            s.to_radians().sin().abs().max(e.to_radians().sin().abs())
-        }
-    } else {
-        match &wind.dir {
-            metar_decoder::wind::WindDirection::Heading(wind_dir) => wind_dir
-                .0
-                .to_option()
-                .map(|wind_dir| {
-                    (diff_angle(track, wind_dir) as f64)
-                        .to_radians()
-                        .sin()
-                        .abs()
-                })
-                .unwrap_or(1.0),
-            metar_decoder::wind::WindDirection::Variable => 1.0,
-        }
-    };
-
-    scale_speed(wind.speed, factor)
-}
-
-pub fn calculate_max_headwind(runway: &crate::runway::RunwayDirection, wind: Wind) -> Option<i32> {
-    let track = runway.degrees as u32;
-    let factor = if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) =
-        wind.varying
-    {
-        let heads = [track % 360];
-        let (start, end) = (start % 360, end % 360);
-        let includes = |a| {
-            if start <= end {
-                a >= start && a <= end
-            } else {
-                a >= start || a <= end
-            }
-        };
-
-        if heads.iter().any(|&a| includes(a)) {
-            1.0
-        } else {
-            let s = f64::from(diff_angle(track, start));
-            let e = f64::from(diff_angle(track, end));
-            s.to_radians().cos().max(e.to_radians().cos())
-        }
-    } else {
-        match &wind.dir {
-            metar_decoder::wind::WindDirection::Heading(wind_dir) => wind_dir
-                .0
-                .to_option()
-                .map(|wind_dir| (diff_angle(track, wind_dir) as f64).to_radians().cos())
-                .unwrap_or(1.0),
-            metar_decoder::wind::WindDirection::Variable => 1.0,
-        }
-    };
-
-    scale_speed(wind.speed, factor)
-}
-
-fn scale_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
-    speed
-        .get_max_wind_speed()
-        .map(|s| (f64::from(s) * factor).ceil() as i32)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use metar_decoder::{units::velocity::VelocityUnit, wind::WindDirection};
+    use metar_decoder::{
+        optional_data::OptionalData,
+        units::{
+            track::Track,
+            velocity::{VelocityUnit, WindVelocity},
+        },
+        wind::{Wind, WindDirection},
+    };
 
     // #[test]
     // fn test_calculate_max_crosswind() {
