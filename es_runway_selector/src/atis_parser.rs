@@ -83,13 +83,7 @@ fn upsert(map: &mut IndexMap<String, RunwayUse>, rwy: &str, new_use: RunwayUse) 
             e.insert(new_use);
         }
         Entry::Occupied(mut e) => {
-            let merged = match (*e.get(), new_use) {
-                (RunwayUse::Both, _) | (_, RunwayUse::Both) => RunwayUse::Both,
-                (RunwayUse::Arriving, RunwayUse::Departing)
-                | (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
-                (existing, _) => existing,
-            };
-            e.insert(merged);
+            e.insert((*e.get()).merged_with(new_use));
         }
     }
 }

@@ -1,10 +1,11 @@
 pub(crate) mod airport;
 pub(crate) mod airports;
-pub(crate) mod atis;
+pub(crate) mod atis_parser;
 pub(crate) mod config;
 pub(crate) mod error;
 pub(crate) mod metar;
 pub(crate) mod runway;
+pub(crate) mod sector_file;
 pub(crate) mod util;
 
 use std::{
@@ -90,9 +91,9 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     });
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
-    airports.fill_known_airports(&mut sct_file, &config)?;
+    airports.load_airports_from_sector_file(&mut sct_file, &config)?;
     airports.add_metars(&config).await;
-    airports.read_atises_and_apply_runways().await.unwrap();
+    airports.read_atis_and_apply_runways().await.unwrap();
     airports.select_runway_in_use(&config);
     airports.sort();
     config

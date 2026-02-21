@@ -25,9 +25,9 @@ use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
-use crate::{
-    airport::RunwayInUseSource, airports::Airports, error::ApplicationResult, runway::RunwayUse,
-};
+use crate::{airport::RunwayInUseSource, airports::Airports, error::ApplicationResult};
+
+const DEFAULT_SECTOR_FILE_PREFIX: &str = "ENOR";
 
 pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
     ProjectDirs::from("", "meltinglava", "es_runway_selector")
@@ -37,7 +37,7 @@ pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
 #[derive(Debug)]
 pub(crate) struct ESConfig {
     euroscope_config_folder: PathBuf,
-    enor_file_prefix: String,
+    sector_file_prefix: String,
     #[allow(dead_code)] // used in tests
     config_file_path: PathBuf,
     config: Configurable,
@@ -64,14 +64,14 @@ struct AppLauncher {
 impl Configurable {
     fn find_from_config(&self) -> Option<(PathBuf, String)> {
         let path = self.euroscope_config_folder.as_ref()?;
-        search_for_ese_with_possibilities(&[path])
+        search_for_sct_with_possibilities(&[path])
     }
 }
 
 impl ESConfig {
     pub fn find_euroscope_config_folder(clean_config: bool) -> Option<Self> {
         let (mut config, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
-        let (sct_path, enor_file_prefix) = search_for_euroscope_newest_sct_file()
+        let (sct_path, sector_file_prefix) = search_for_newest_sct_file()
             .or_else(|| config.find_from_config())
             .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
 
@@ -79,7 +79,7 @@ impl ESConfig {
 
         Some(Self {
             euroscope_config_folder: sct_path,
-            enor_file_prefix,
+            sector_file_prefix,
             config,
             config_file_path,
             app_launchers,
@@ -96,12 +96,12 @@ impl ESConfig {
 
     pub fn get_sct_file_path(&self) -> PathBuf {
         self.euroscope_config_folder
-            .join(format!("{}.sct", self.enor_file_prefix))
+            .join(format!("{}.sct", self.sector_file_prefix))
     }
 
     pub fn get_rwy_file_path(&self) -> PathBuf {
         self.euroscope_config_folder
-            .join(format!("{}.rwy", self.enor_file_prefix))
+            .join(format!("{}.rwy", self.sector_file_prefix))
     }
 
     pub fn write_runways_to_euroscope_rwy_file(
@@ -218,7 +218,7 @@ fn find_exe_path(name: &str) -> Option<PathBuf> {
 }
 
 impl AppLauncher {
-    /// Lanch the application detached from the current process
+    /// Launch the application detached from the current process
     async fn run(&self, exe_path: &Path, prf_folder: PathBuf) {
         #[cfg(target_os = "windows")]
         let mut command = {
@@ -381,7 +381,7 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     let bd = BaseDirs::new()?;
 
     let possibility = rfd::FileDialog::new()
-        .set_title("Select Euroscope sector file folder. The folder containing the ese file")
+        .set_title("Select Euroscope sector file folder (contains .sct/.rwy)")
         .set_directory(bd.config_dir())
         .add_filter("Euroscope Configuration", &["sct", "rwy"])
         .pick_folder()
@@ -390,7 +390,7 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
             fs::write(config_file_path, toml::to_string_pretty(&config).unwrap())
                 .expect("Failed to write config file");
         })?;
-    search_for_ese_with_possibilities(&[possibility])
+    search_for_sct_with_possibilities(&[possibility])
 }
 
 #[cfg(target_env = "musl")]
@@ -462,13 +462,7 @@ fn write_runway_file<T: Write>(
             .find_map(|method| airport.runways_in_use.get(method))
         {
             for (runway, usage) in selection {
-                let flags: &[u8] = match usage {
-                    RunwayUse::Departing => &[1],
-                    RunwayUse::Arriving => &[0],
-                    RunwayUse::Both => &[1, 0],
-                };
-
-                for flag in flags {
+                for flag in usage.active_runway_flags() {
                     writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
                 }
             }
@@ -478,7 +472,7 @@ fn write_runway_file<T: Write>(
     Ok(())
 }
 
-fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
+fn search_for_newest_sct_file() -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new();
     let ud = UserDirs::new();
     let mut possibilities = [
@@ -498,10 +492,10 @@ fn search_for_euroscope_newest_sct_file() -> Option<(PathBuf, String)> {
 
     possibilities.retain(|p| p.exists() && p.is_dir());
 
-    search_for_ese_with_possibilities(&possibilities)
+    search_for_sct_with_possibilities(&possibilities)
 }
 
-fn search_for_ese_with_possibilities<P: AsRef<Path>>(
+fn search_for_sct_with_possibilities<P: AsRef<Path>>(
     possibilities: &[P],
 ) -> Option<(PathBuf, String)> {
     let sct_files = possibilities
@@ -516,12 +510,12 @@ fn search_for_ese_with_possibilities<P: AsRef<Path>>(
                     let Some(extension) = e.path().extension() else {
                         return false;
                     };
-                    name.starts_with("ENOR") && extension == "sct"
+                    name.starts_with(DEFAULT_SECTOR_FILE_PREFIX) && extension == "sct"
                 })
                 .map(|e| e.path().to_path_buf())
         })
         .collect::<Vec<_>>();
-    let file = sct_files.iter().max_by_key(get_es_file_name_time)?;
+    let file = sct_files.iter().max_by_key(get_sector_file_name_time)?;
     Some((
         file.parent()?.to_owned(),
         Path::new(file.file_name()?)
@@ -531,17 +525,17 @@ fn search_for_ese_with_possibilities<P: AsRef<Path>>(
     ))
 }
 
-fn get_es_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
+fn get_sector_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
     path.as_ref()
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
 }
 
-fn get_es_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
+fn get_sector_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
     // example file name: ENOR-Norway-NC_20250612121259-241301-0006.sct
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?<time>\d{14})").unwrap());
 
-    if let Some(caps) = RE.captures(get_es_file_name(path).as_deref().unwrap_or(""))
+    if let Some(caps) = RE.captures(get_sector_file_name(path).as_deref().unwrap_or(""))
         && let Some(time_str) = caps.name("time")
         && let Ok(dt) = DateTime::strptime("%Y%m%d%H%M%S", time_str.as_str())
     {
@@ -580,7 +574,7 @@ mod tests {
                 .expect("Failed to deserialize configuration");
             Self {
                 euroscope_config_folder: PathBuf::from("/test/path"),
-                enor_file_prefix: "ENOR-Test".to_string(),
+                sector_file_prefix: "ENOR-Test".to_string(),
                 config,
                 config_file_path: config_file,
                 app_launchers: IndexSet::new(),
@@ -598,9 +592,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_es_file_name() {
+    fn test_get_sector_file_name() {
         let p = "ENOR-Norway-NC-DEV_20230403191923-230301-0004.sct";
-        let dt = get_es_file_name_time(&p);
+        let dt = get_sector_file_name_time(&p);
         let target = DateTime::strptime("%Y%m%d%H%M%S", "20230403191923").unwrap();
         assert_eq!(dt, target);
     }
@@ -617,7 +611,7 @@ mod tests {
     // name = "TrackAudio"
 
     #[test]
-    fn test_app_loucher_reader() {
+    fn test_app_launcher_reader() {
         let config_file = get_app_launchers(&PathBuf::from("test.toml"));
         let mut expected = IndexSet::new();
         expected.insert(AppLauncher {

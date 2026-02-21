@@ -153,10 +153,6 @@ fn scale_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use crate::{airport::Airport, airports::Airports, config::ESConfig};
-
     use super::*;
     use metar_decoder::{units::velocity::VelocityUnit, wind::WindDirection};
 

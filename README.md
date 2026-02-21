@@ -15,7 +15,7 @@ The application has the ablility to open euroscope (and other applications).
 This needs to be configured.
 
 1. open file explorer (`windowsbutton + e` default shortcut).
-2. Go to path: `%APPDATA%/meltinglava/es_runway_selector/config`. You acn paste it
+2. Go to path: `%APPDATA%/meltinglava/es_runway_selector/config`. You can paste it
    in on the top just click on the unfilled area at the top showing current path.
    - If the folder does not exsist just run `es_runway_selector` once. It will
      create it

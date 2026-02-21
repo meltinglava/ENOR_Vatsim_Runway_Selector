@@ -1,8 +1,4 @@
 use askama::Template;
-use encoding::{
-    DecoderTrap, Encoding,
-    all::{ISO_8859_1, UTF_8},
-};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use tabled::builder::Builder;
@@ -16,11 +12,12 @@ use std::{
 
 use crate::{
     airport::{Airport, RunwayInUseSource},
-    atis::find_runway_in_use_from_atis,
+    atis_parser::find_runway_in_use_from_atis,
     config::ESConfig,
     error::ApplicationResult,
     metar::get_metars,
-    runway::{Runway, RunwayDirection, RunwayUse},
+    runway::RunwayUse,
+    sector_file::load_airports_from_sct_runway_section,
 };
 
 pub struct Airports {
@@ -42,49 +39,23 @@ impl Airports {
         self.airports.insert(airport.icao.clone(), airport);
     }
 
-    pub fn fill_known_airports<R: Read>(
+    pub fn load_airports_from_sector_file<R: Read>(
         &mut self,
         reader: &mut R,
         config: &ESConfig,
     ) -> ApplicationResult<()> {
-        let sct_file = read_with_encoings(reader).expect("Failed to read SCT file");
-        let ignored_set = config.get_ignore_airports();
+        let parsed_airports =
+            load_airports_from_sct_runway_section(reader, config.get_ignore_airports())?;
 
-        for line in sct_file
-            .lines()
-            .skip_while(|line| *line != "[RUNWAY]")
-            .skip(1)
-            .take_while(|line| !line.is_empty())
-        {
-            let parts: Vec<_> = line.split_whitespace().collect();
-            let icao = *parts.last().unwrap();
-            if ignored_set.contains(icao) {
-                continue;
+        for (icao, mut airport) in parsed_airports {
+            match self.airports.entry(icao) {
+                indexmap::map::Entry::Occupied(mut existing) => {
+                    existing.get_mut().runways.append(&mut airport.runways);
+                }
+                indexmap::map::Entry::Vacant(vacant) => {
+                    vacant.insert(airport);
+                }
             }
-
-            let airport = self
-                .airports
-                .entry(icao.to_string())
-                .or_insert_with(|| Airport {
-                    icao: icao.to_string(),
-                    metar: None,
-                    runways: Vec::new(),
-                    runways_in_use: IndexMap::new(),
-                });
-
-            let runway = Runway {
-                runways: [
-                    RunwayDirection {
-                        degrees: parts[2].parse()?,
-                        identifier: parts[0].into(),
-                    },
-                    RunwayDirection {
-                        degrees: parts[3].parse()?,
-                        identifier: parts[1].into(),
-                    },
-                ],
-            };
-            airport.runways.push(runway);
         }
         Ok(())
     }
@@ -98,14 +69,14 @@ impl Airports {
         }
     }
 
-    pub async fn read_atises_and_apply_runways(&mut self) -> ApplicationResult<()> {
+    pub async fn read_atis_and_apply_runways(&mut self) -> ApplicationResult<()> {
         let icaos = self.identifiers();
         let v3_data = vatsim_utils::live_api::Vatsim::new()
             .await?
             .get_v3_data()
             .await?;
-        let atises = v3_data.atis;
-        for atis in atises {
+        let atis_entries = v3_data.atis;
+        for atis in atis_entries {
             let icao = &atis.callsign[0..4];
             if !icaos.contains(icao) {
                 continue;
@@ -117,21 +88,16 @@ impl Airports {
                 continue;
             };
             let text = atis_lines.into_iter().collect::<Vec<_>>().join(" ");
-            for (runway, config) in find_runway_in_use_from_atis(&text) {
+            for (runway, runway_use) in find_runway_in_use_from_atis(&text) {
                 airport
                     .runways_in_use
                     .entry(RunwayInUseSource::Atis)
                     .or_default()
                     .entry(runway)
-                    .and_modify(|e| {
-                        *e = match (*e, config) {
-                            (RunwayUse::Both, _) | (_, RunwayUse::Both) => RunwayUse::Both,
-                            (RunwayUse::Arriving, RunwayUse::Departing)
-                            | (RunwayUse::Departing, RunwayUse::Arriving) => RunwayUse::Both,
-                            (e, _) => e,
-                        }
+                    .and_modify(|existing| {
+                        *existing = existing.merged_with(runway_use);
                     })
-                    .or_insert(config);
+                    .or_insert(runway_use);
             }
         }
 
@@ -197,6 +163,83 @@ impl Airports {
         self.airports.sort_unstable_keys();
     }
 
+    fn grouped_runway_config_report_data(&self) -> AirportsConfigReportData {
+        let mut data = AirportsConfigReportData::new();
+
+        for airport in self.airports.values() {
+            let preferred_selection = RunwayInUseSource::default_sort_order()
+                .into_iter()
+                .find_map(|selection_source| {
+                    airport
+                        .runways_in_use
+                        .get(&selection_source)
+                        .map(|selection| (selection_source, selection.clone()))
+                });
+
+            match preferred_selection {
+                Some((selection_source, runway_selection)) => {
+                    data.entry(Some(selection_source))
+                        .or_default()
+                        .push((airport.icao.clone(), runway_selection));
+                }
+                None => {
+                    data.entry(None)
+                        .or_default()
+                        .push((airport.icao.clone(), IndexMap::new()));
+                }
+            }
+        }
+
+        Self::sort_runway_config_report_data(&mut data);
+        data
+    }
+
+    fn sort_runway_config_report_data(data: &mut AirportsConfigReportData) {
+        data.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(k1), Some(k2)) => k1.cmp(k2),
+        });
+    }
+
+    fn source_label(source: Option<&RunwayInUseSource>, none_with_colon: bool) -> &'static str {
+        match source {
+            Some(RunwayInUseSource::Atis) => "ATIS",
+            Some(RunwayInUseSource::Metar) => "METAR",
+            Some(RunwayInUseSource::Default) => "fallback",
+            None if none_with_colon => "No runway config:",
+            None => "No runway config",
+        }
+    }
+
+    fn source_class(source: Option<&RunwayInUseSource>) -> &'static str {
+        match source {
+            Some(_) => "",
+            None => "none",
+        }
+    }
+
+    fn format_runway_usage(runways: &IndexMap<String, RunwayUse>) -> Option<String> {
+        if runways.is_empty() {
+            None
+        } else {
+            Some(
+                runways
+                    .iter()
+                    .map(|(runway, usage)| format!("{runway}{}", usage.report_suffix()))
+                    .join(" + "),
+            )
+        }
+    }
+
+    fn metar_text_for_airport(&self, icao: &str) -> String {
+        self.airports
+            .get(icao)
+            .and_then(|airport| airport.metar.as_ref().map(|metar| metar.raw.clone()))
+            .unwrap_or_else(|| format!("{icao} No METAR"))
+    }
+
     pub(crate) fn make_runway_report(&self) {
         let mut stdout = std::io::stdout().lock();
         self.make_runway_report_with_writer(&mut stdout)
@@ -204,29 +247,8 @@ impl Airports {
     }
 
     fn make_runway_report_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut counter = AirportsConfigReportData::new();
-        'airport_loop: for airport in self.airports.values() {
-            for selection_source in RunwayInUseSource::default_sort_order() {
-                if let Some(runway_selection) = airport.runways_in_use.get(&selection_source) {
-                    counter
-                        .entry(Some(selection_source))
-                        .or_insert_with(|| Vec::with_capacity(1))
-                        .push((airport.icao.clone(), runway_selection.clone()));
-                    continue 'airport_loop;
-                }
-            }
-            counter
-                .entry(None)
-                .or_insert_with(|| Vec::with_capacity(1))
-                .push((airport.icao.clone(), IndexMap::new()));
-        }
-        counter.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(k1), Some(k2)) => k1.cmp(k2),
-        });
-        self.write_runway_report_tabled(writer, &counter)?;
+        let report_data = self.grouped_runway_config_report_data();
+        self.write_runway_report_tabled(writer, &report_data)?;
         Ok(())
     }
 
@@ -243,43 +265,18 @@ impl Airports {
             "METAR",
         ]);
         for (source, configs) in data {
-            let source_str = match source {
-                Some(RunwayInUseSource::Atis) => "ATIS",
-                Some(RunwayInUseSource::Metar) => "METAR",
-                Some(RunwayInUseSource::Default) => "fallback",
-                None => "No runway config:",
-            };
+            let source_str = Self::source_label(source.as_ref(), true);
             let airports_str = configs
                 .iter()
                 .map(|(icao, runways)| {
-                    if runways.is_empty() {
-                        return icao.to_owned();
-                    }
-                    let runways_str = runways
-                        .iter()
-                        .map(|(rw, usage)| {
-                            format!(
-                                "{}{}",
-                                rw,
-                                match usage {
-                                    RunwayUse::Arriving => " Arr",
-                                    RunwayUse::Departing => " Dep",
-                                    RunwayUse::Both => "",
-                                }
-                            )
-                        })
-                        .join(" + ");
-                    format!("{}: {}", icao, runways_str)
+                    Self::format_runway_usage(runways)
+                        .map(|runways_str| format!("{icao}: {runways_str}"))
+                        .unwrap_or_else(|| icao.to_owned())
                 })
                 .join("\n");
             let metars = configs
                 .iter()
-                .map(|(icao, _)| -> String {
-                    self.airports
-                        .get(icao)
-                        .and_then(|airport| airport.metar.as_ref().map(|m| m.raw.clone()))
-                        .unwrap_or_else(|| format!("{} No METAR", icao))
-                })
+                .map(|(icao, _)| self.metar_text_for_airport(icao))
                 .join("\n");
             builder.push_record([
                 source_str,
@@ -305,37 +302,10 @@ impl Airports {
     }
 
     fn make_runway_report_html_with_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut counter = AirportsConfigReportData::new();
-
-        // Build the grouped report data (same logic as your table output)
-        'airport_loop: for airport in self.airports.values() {
-            for selection_source in RunwayInUseSource::default_sort_order() {
-                if let Some(runway_selection) = airport.runways_in_use.get(&selection_source) {
-                    counter
-                        .entry(Some(selection_source))
-                        .or_insert_with(|| Vec::with_capacity(1))
-                        .push((airport.icao.clone(), runway_selection.clone()));
-                    continue 'airport_loop;
-                }
-            }
-
-            // No runway config found for any source
-            counter
-                .entry(None)
-                .or_insert_with(|| Vec::with_capacity(1))
-                .push((airport.icao.clone(), IndexMap::new()));
-        }
-
-        // Sort groups so None (no config) ends last; otherwise by RunwayInUseSource ordering
-        counter.sort_unstable_by(|k1, _v1, k2, _v2| match (k1, k2) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(k1), Some(k2)) => k1.cmp(k2),
-        });
+        let report_data = self.grouped_runway_config_report_data();
 
         // Convert to view model for the template
-        let view = self.build_runway_report_view(&counter);
+        let view = self.build_runway_report_view(&report_data);
 
         // Render template
         let tpl = RunwayReportTemplate {
@@ -351,37 +321,15 @@ impl Airports {
         let mut groups = Vec::new();
 
         for (source, configs) in data {
-            let (label, class) = match source {
-                Some(RunwayInUseSource::Atis) => ("ATIS", ""),
-                Some(RunwayInUseSource::Metar) => ("METAR", ""),
-                Some(RunwayInUseSource::Default) => ("fallback", ""),
-                None => ("No runway config", "none"),
-            };
+            let label = Self::source_label(source.as_ref(), false);
+            let class = Self::source_class(source.as_ref());
 
             let mut airports = Vec::with_capacity(configs.len());
 
             for (icao, runways) in configs {
-                let runway_text = if runways.is_empty() {
-                    "(no selection)".to_string()
-                } else {
-                    runways
-                        .iter()
-                        .map(|(rw, usage)| {
-                            let suffix = match usage {
-                                RunwayUse::Arriving => " Arr",
-                                RunwayUse::Departing => " Dep",
-                                RunwayUse::Both => "",
-                            };
-                            format!("{rw}{suffix}")
-                        })
-                        .join(" + ")
-                };
-
-                let metar = self
-                    .airports
-                    .get(icao)
-                    .and_then(|a| a.metar.as_ref().map(|m| m.raw.clone()))
-                    .unwrap_or_else(|| format!("{icao} No METAR"));
+                let runway_text = Self::format_runway_usage(runways)
+                    .unwrap_or_else(|| "(no selection)".to_string());
+                let metar = self.metar_text_for_airport(icao);
 
                 airports.push(AirportRunwayView {
                     icao: icao.clone(),
@@ -412,20 +360,6 @@ impl Index<&str> for Airports {
 impl IndexMut<&str> for Airports {
     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
         &mut self.airports[index]
-    }
-}
-
-fn read_with_encoings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
-    let mut buffer = Vec::new();
-    reader.read_to_end(&mut buffer)?;
-
-    let utf8_decoded = UTF_8.decode(&buffer, DecoderTrap::Strict);
-
-    match utf8_decoded {
-        Ok(text) => Ok(text),
-        Err(e) => ISO_8859_1
-            .decode(&buffer, DecoderTrap::Strict)
-            .map_err(|_| crate::error::ApplicationError::EncodingError(e.to_string())),
     }
 }
 
@@ -465,7 +399,8 @@ pub(crate) mod tests {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
         let config = ESConfig::new_for_test();
-        ap.fill_known_airports(&mut reader, &config).unwrap();
+        ap.load_airports_from_sector_file(&mut reader, &config)
+            .unwrap();
         assert_eq!(ap.airports.len(), 50);
     }
 
@@ -474,7 +409,8 @@ pub(crate) mod tests {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
         let config = ESConfig::new_for_test();
-        ap.fill_known_airports(&mut reader, &config).unwrap();
+        ap.load_airports_from_sector_file(&mut reader, &config)
+            .unwrap();
         let airport = ap.airports.swap_remove(&icao).unwrap();
         let metar: Metar = metar_str.parse().unwrap();
         Airport {
