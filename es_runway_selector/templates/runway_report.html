@@ -90,17 +90,24 @@
 
  tbody tr:last-child td { border-bottom: none; }
 
- .icao {
-     color: var(--accent);
-     font-weight: 600;
-     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-     white-space: nowrap;
- }
+.icao {
+    color: var(--accent);
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    white-space: nowrap;
+    vertical-align: middle;
+}
 
- .runways {
-     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-     white-space: normal;
- }
+.runways {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    white-space: pre-wrap;
+}
+
+.wind {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    white-space: pre;
+    font-variant-numeric: tabular-nums;
+}
 
  .metar {
      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -108,6 +115,7 @@
      word-break: break-word;
      line-height: 1.1;
      font-size: 12px;
+     vertical-align: middle;
  }
 
  /* column sizing */
@@ -146,7 +154,7 @@
         <tr>
           <td class="icao">{{ a.icao }}</td>
           <td class="runways">{{ a.runway_text }}</td>
-          <td class="runways">{{ a.wind_text }}</td>
+          <td class="wind">{{ a.wind_text }}</td>
           <td class="metar">{{ a.metar }}</td>
         </tr>
         {% endfor %}

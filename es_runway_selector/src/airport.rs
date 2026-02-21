@@ -48,8 +48,15 @@ pub struct Airport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunwayWindComponents {
     pub headwind: i32,
-    pub tailwind: i32,
     pub crosswind: i32,
+    pub crosswind_direction: CrosswindDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrosswindDirection {
+    Left,
+    Right,
+    Variable,
 }
 
 #[derive(Debug)]
@@ -66,12 +73,12 @@ impl Airport {
         runway_direction: &RunwayDirection,
     ) -> Option<RunwayWindComponents> {
         let headwind = self.runway_max_headwind(runway_direction)?;
-        let crosswind = self.runway_max_crosswind(runway_direction)?;
+        let (crosswind, crosswind_direction) = self.runway_max_crosswind(runway_direction)?;
 
         Some(RunwayWindComponents {
             headwind,
-            tailwind: (-headwind).max(0),
             crosswind,
+            crosswind_direction,
         })
     }
 
@@ -82,11 +89,14 @@ impl Airport {
 
     #[allow(dead_code)] // planned for runway report output
     pub fn runway_max_tailwind(&self, runway_direction: &RunwayDirection) -> Option<i32> {
-        self.runway_max_headwind(runway_direction)
-            .map(|headwind| (-headwind).max(0))
+        let metar = self.metar.as_ref()?;
+        Self::calculate_max_tailwind_from_wind(runway_direction, metar.wind.clone())
     }
 
-    pub fn runway_max_crosswind(&self, runway_direction: &RunwayDirection) -> Option<i32> {
+    pub fn runway_max_crosswind(
+        &self,
+        runway_direction: &RunwayDirection,
+    ) -> Option<(i32, CrosswindDirection)> {
         let metar = self.metar.as_ref()?;
         Self::calculate_max_crosswind_from_wind(runway_direction, &metar.wind)
     }
@@ -306,7 +316,9 @@ impl Airport {
             .find(|dir| dir.identifier == main_runway)
             .unwrap();
 
-        let Some(crosswind) = self.runway_max_crosswind(main_runway_direction) else {
+        let Some((crosswind, _crosswind_direction)) =
+            self.runway_max_crosswind(main_runway_direction)
+        else {
             return default_fallback;
         };
         if crosswind < 15 {
@@ -316,6 +328,7 @@ impl Airport {
         let secondary_runway_index = main_runway_index & 1;
         let secondary_runway_crosswind = self
             .runway_max_crosswind(&self.runways[secondary_runway_index].runways[0])
+            .map(|(crosswind, _crosswind_direction)| crosswind)
             .unwrap();
         let secondary_runway =
             match self.internal_set_runway_based_on_metar_wind(secondary_runway_index) {
@@ -332,48 +345,84 @@ impl Airport {
         }
     }
 
-    fn calculate_max_crosswind_from_wind(runway: &RunwayDirection, wind: &Wind) -> Option<i32> {
+    fn calculate_max_crosswind_from_wind(
+        runway: &RunwayDirection,
+        wind: &Wind,
+    ) -> Option<(i32, CrosswindDirection)> {
+        const EPSILON: f64 = 1e-9;
         let track: u32 = runway.degrees as u32;
 
-        let factor =
+        let (factor, direction) =
             if let Some((Track(OptionalData::Data(start)), Track(OptionalData::Data(end)))) =
                 wind.varying
             {
-                let cross = [(track + 90) % 360, (track + 270) % 360];
+                let cross_from_right = (track + 90) % 360;
+                let cross_from_left = (track + 270) % 360;
                 let (start, end): (u32, u32) = (start % 360, end % 360);
 
-                let includes = |a| {
+                let includes = |angle| {
                     if start <= end {
-                        a >= start && a <= end
+                        angle >= start && angle <= end
                     } else {
-                        a >= start || a <= end
+                        angle >= start || angle <= end
                     }
                 };
 
-                if cross.iter().any(|&a| includes(a)) {
-                    1.0
+                let includes_right = includes(cross_from_right);
+                let includes_left = includes(cross_from_left);
+
+                if includes_right && includes_left {
+                    (1.0, CrosswindDirection::Variable)
+                } else if includes_right {
+                    (1.0, CrosswindDirection::Right)
+                } else if includes_left {
+                    (1.0, CrosswindDirection::Left)
                 } else {
-                    let s: f64 = diff_angle(track, start).into();
-                    let e: f64 = diff_angle(track, end).into();
-                    s.to_radians().sin().abs().max(e.to_radians().sin().abs())
+                    let start_component = Self::signed_crosswind_component_factor(track, start);
+                    let end_component = Self::signed_crosswind_component_factor(track, end);
+                    let start_abs = start_component.abs();
+                    let end_abs = end_component.abs();
+
+                    if (start_abs - end_abs).abs() < EPSILON {
+                        let direction = if start_component.signum() != end_component.signum() {
+                            CrosswindDirection::Variable
+                        } else {
+                            Self::crosswind_direction_from_signed_factor(start_component)
+                        };
+                        (start_abs, direction)
+                    } else if start_abs > end_abs {
+                        (
+                            start_abs,
+                            Self::crosswind_direction_from_signed_factor(start_component),
+                        )
+                    } else {
+                        (
+                            end_abs,
+                            Self::crosswind_direction_from_signed_factor(end_component),
+                        )
+                    }
                 }
             } else {
                 match &wind.dir {
-                    metar_decoder::wind::WindDirection::Heading(wind_dir) => wind_dir
-                        .0
-                        .to_option()
-                        .map(|wind_dir| {
-                            (diff_angle(track, wind_dir) as f64)
-                                .to_radians()
-                                .sin()
-                                .abs()
-                        })
-                        .unwrap_or(1.0),
-                    metar_decoder::wind::WindDirection::Variable => 1.0,
+                    metar_decoder::wind::WindDirection::Heading(wind_dir) => {
+                        if let Some(wind_dir) = wind_dir.0.to_option() {
+                            let signed_factor =
+                                Self::signed_crosswind_component_factor(track, wind_dir);
+                            (
+                                signed_factor.abs(),
+                                Self::crosswind_direction_from_signed_factor(signed_factor),
+                            )
+                        } else {
+                            (1.0, CrosswindDirection::Variable)
+                        }
+                    }
+                    metar_decoder::wind::WindDirection::Variable => {
+                        (1.0, CrosswindDirection::Variable)
+                    }
                 }
             };
 
-        Self::scale_wind_speed(wind.speed, factor)
+        Self::scale_wind_speed(wind.speed, factor).map(|crosswind| (crosswind, direction))
     }
 
     fn calculate_max_headwind_from_wind(runway: &RunwayDirection, wind: Wind) -> Option<i32> {
@@ -413,6 +462,31 @@ impl Airport {
         Self::scale_wind_speed(wind.speed, factor)
     }
 
+    fn calculate_max_tailwind_from_wind(runway: &RunwayDirection, wind: Wind) -> Option<i32> {
+        let opposite_runway = RunwayDirection {
+            degrees: ((runway.degrees as u32 + 180) % 360) as u16,
+            identifier: runway.identifier.clone(),
+        };
+        Self::calculate_max_headwind_from_wind(&opposite_runway, wind)
+            .map(|headwind| headwind.max(0))
+    }
+
+    fn signed_crosswind_component_factor(track: u32, wind_dir: u32) -> f64 {
+        let angle = ((wind_dir as i32 - track as i32 + 540) % 360) - 180;
+        (angle as f64).to_radians().sin()
+    }
+
+    fn crosswind_direction_from_signed_factor(signed_factor: f64) -> CrosswindDirection {
+        const EPSILON: f64 = 1e-9;
+        if signed_factor > EPSILON {
+            CrosswindDirection::Right
+        } else if signed_factor < -EPSILON {
+            CrosswindDirection::Left
+        } else {
+            CrosswindDirection::Variable
+        }
+    }
+
     fn scale_wind_speed(speed: WindVelocity, factor: f64) -> Option<i32> {
         speed
             .get_max_wind_speed()
@@ -422,7 +496,7 @@ impl Airport {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{Airport, RunwayDirection};
+    use super::{Airport, CrosswindDirection, RunwayDirection};
     use crate::airports::tests::make_test_airport;
 
     fn runway_direction<'a>(airport: &'a Airport, identifier: &str) -> &'a RunwayDirection {
@@ -454,17 +528,37 @@ pub(crate) mod tests {
 
         let components = ap.runway_wind_components(runway_08).unwrap();
         assert_eq!(components.headwind, 8);
-        assert_eq!(components.tailwind, 0);
         assert!(components.crosswind <= 1);
 
         assert_eq!(ap.runway_max_headwind(runway_08), Some(8));
         assert!(
             ap.runway_max_crosswind(runway_08)
-                .is_some_and(|crosswind| crosswind <= 1)
+                .is_some_and(|(crosswind, _direction)| crosswind <= 1)
         );
         assert!(
             ap.runway_max_tailwind(runway_26)
                 .is_some_and(|tailwind| tailwind >= 7)
         );
+    }
+
+    #[test]
+    fn test_crosswind_direction_is_side_sensitive() {
+        let runway_08_right = {
+            let airport = make_test_airport("ENHV 081620Z AUTO 17010KT 9999 OVC006/// 08/07 Q1001");
+            let runway_08 = runway_direction(&airport, "08");
+            airport
+                .runway_max_crosswind(runway_08)
+                .map(|(_crosswind, direction)| direction)
+        };
+        let runway_08_left = {
+            let airport = make_test_airport("ENHV 081620Z AUTO 35010KT 9999 OVC006/// 08/07 Q1001");
+            let runway_08 = runway_direction(&airport, "08");
+            airport
+                .runway_max_crosswind(runway_08)
+                .map(|(_crosswind, direction)| direction)
+        };
+
+        assert_eq!(runway_08_right, Some(CrosswindDirection::Right));
+        assert_eq!(runway_08_left, Some(CrosswindDirection::Left));
     }
 }
