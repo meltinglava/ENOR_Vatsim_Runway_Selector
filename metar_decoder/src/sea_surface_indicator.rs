@@ -5,7 +5,7 @@ use nom::{
     sequence::{preceded, separated_pair},
 };
 
-use crate::{optional_data::OptionalData, temprature::nom_maybe_negative_temp};
+use crate::{optional_data::OptionalData, temperature::nom_maybe_negative_temp};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SeaSurfaceIndicator {
@@ -15,7 +15,7 @@ pub struct SeaSurfaceIndicator {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum StateOfSea {
-    SeaSate(OptionalData<CodeTable3700, 1>),
+    SeaState(OptionalData<CodeTable3700, 1>),
     SignificantWaveHeight(OptionalData<u16, 3>), // in decimeters
 }
 
@@ -70,7 +70,7 @@ pub(crate) fn nom_state_of_sea(input: &str) -> nom::IResult<&str, StateOfSea> {
             _ => Err("Invalid code for State of Sea"),
         })),
     )
-    .map(StateOfSea::SeaSate)
+    .map(StateOfSea::SeaState)
     .parse(input)
 }
 
@@ -92,7 +92,7 @@ mod tests {
             "W19/S4",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(19),
-                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(
+                state_of_sea: OptionalData::Data(StateOfSea::SeaState(OptionalData::Data(
                     CodeTable3700::Moderate,
                 ))),
             },
@@ -110,7 +110,7 @@ mod tests {
             "W///S3",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Undefined,
-                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Data(
+                state_of_sea: OptionalData::Data(StateOfSea::SeaState(OptionalData::Data(
                     CodeTable3700::Slight,
                 ))),
             },
@@ -119,7 +119,7 @@ mod tests {
             "W17/S/",
             SeaSurfaceIndicator {
                 temperature: OptionalData::Data(17),
-                state_of_sea: OptionalData::Data(StateOfSea::SeaSate(OptionalData::Undefined)),
+                state_of_sea: OptionalData::Data(StateOfSea::SeaState(OptionalData::Undefined)),
             },
         ),
         (

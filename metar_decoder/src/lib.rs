@@ -4,7 +4,7 @@ pub mod obscuration;
 pub mod optional_data;
 pub mod pressure;
 pub mod sea_surface_indicator;
-pub mod temprature;
+pub mod temperature;
 pub mod trend;
 pub mod units;
 pub mod wind;

@@ -1,7 +1,7 @@
 # ENOR runway selector
 
-This is not ment for real world use. My usecase will be for flight simulation.
-Most changes for the future will probably be braking as we export most types as
+This is not meant for real world use. My use case will be for flight simulation.
+Most changes for the future will probably be breaking as we export most types as
 public.
 
 Reference used [Aerodrome Reports and Forecasts: A Users’ Handbook to the Codes](https://library.wmo.int/records/item/30224-aerodrome-reports-and-forecasts)

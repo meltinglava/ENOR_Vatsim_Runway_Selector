@@ -243,7 +243,7 @@ impl Airport {
                     })
                 });
 
-            possible_deice_conditions = match metar.temprature.temp {
+            possible_deice_conditions = match metar.temperature.temp {
                 OptionalData::Undefined => contender_for_deice,
                 OptionalData::Data(temp) => temp < 5 && contender_for_deice,
             }

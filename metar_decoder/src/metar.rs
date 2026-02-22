@@ -22,7 +22,7 @@ use crate::{
     optional_data::OptionalData,
     pressure::{Pressure, nom_pressure},
     sea_surface_indicator::{SeaSurfaceIndicator, nom_sea_surface_indicator},
-    temprature::{TempratureInfo, nom_temprature_info},
+    temperature::{TemperatureInfo, nom_temperature_info},
     trend::{Trend, nom_becoming},
     units::timestamp::{Timestamp, nom_metar_timestamp},
     wind::{Wind, nom_wind},
@@ -37,7 +37,7 @@ pub struct Metar {
     pub auto: bool,
     pub wind: Wind,
     pub obscuration: Obscuration,
-    pub temprature: TempratureInfo,
+    pub temperature: TemperatureInfo,
     pub pressure: Pressure,
     pub recent_weather: Option<Vec<PresentWeather>>,
     pub nosig: bool,
@@ -54,7 +54,7 @@ impl FromStr for Metar {
     #[tracing::instrument(name = "metar_parse")]
     fn from_str(mut s: &str) -> Result<Self, Self::Err> {
         s = s.trim();
-        s = s.trim_end_matches(" RMK"); // Military airprorts in Switzerland sometimes end with RMK but have no remarks.
+        s = s.trim_end_matches(" RMK"); // Military airports in Switzerland sometimes end with RMK but have no remarks.
         s = s.trim_end_matches('='); // Nonsense = at the end
         let (rest, metar) = nom_parse_metar(s).finish().inspect_err(|e| {
             warn!(?e);
@@ -138,7 +138,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
             corrected,
             auto,
             wind,
-            (obscuration, temprature, pressure),
+            (obscuration, temperature, pressure),
             recent_weather,
             sea_surface_indicator,
             nato_mil_code,
@@ -155,7 +155,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
         preceded(char(' '), nom_wind),
         permutation((
             preceded(char(' '), nom_obscuration),
-            preceded(opt(char(' ')), nom_temprature_info),
+            preceded(opt(char(' ')), nom_temperature_info),
             preceded(char(' '), nom_pressure),
         )),
         preceded(space0, opt(nom_recent_present_weather)),
@@ -186,7 +186,7 @@ fn nom_parse_metar(input: &str) -> IResult<&str, Metar> {
             auto: auto.is_some(),
             wind,
             obscuration,
-            temprature,
+            temperature,
             pressure,
             recent_weather,
             nosig: nosig.is_some(),
@@ -242,28 +242,28 @@ mod tests {
 
     #[test]
     #[traced_test]
-    fn test_parseble_1() {
+    fn test_parsable_1() {
         let input = "ENBR 111150Z 25006KT 9999 VCSH FEW005 SCT011 BKN014 12/10 Q1026 TEMPO SCT014 BKN020 RMK WIND 1200FT 27013KT";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
     #[traced_test]
-    fn test_parseble_2() {
+    fn test_parsable_2() {
         let input = "ENBL 111220Z 25006KT 200V290 1000 R07/0600 FG DZ SCT005 BKN010 09/09 Q1024";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
     #[traced_test]
-    fn test_parseble_3() {
+    fn test_parsable_3() {
         let input = "ENZV 111920Z 30010KT 4000 -DZ BR VV007 13/12 Q1027 TEMPO 1200 DZ VV003";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
     #[traced_test]
-    fn test_parseble_4() {
+    fn test_parsable_4() {
         let input = "ENBR 120520Z 32007KT 3500 DZ VV005 11/11 Q1026 TEMPO 9999 NSW SCT008 BKN015 RMK WIND 1200FT 33014KT";
         Metar::from_str(input).unwrap();
     }
@@ -271,13 +271,13 @@ mod tests {
     #[test]
     #[traced_test]
     #[tracing::instrument(name = "EGWC 121350Z AUTO 05002KT //// ///////// ///// Q////")]
-    fn test_parseble_5() {
+    fn test_parsable_5() {
         let input = "EGWC 121350Z AUTO 05002KT //// ///////// ///// Q////";
         Metar::from_str(input).unwrap();
     }
 
     #[test]
-    #[ignore = "only used for testing localy"]
+    #[ignore = "only used for testing locally"]
     #[traced_test]
     fn test_found_bad_metars() {
         let path = std::path::Path::new("../failed_metars.json");
