@@ -1,168 +1,222 @@
 <!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<title>Runway Report</title>
-<style>
- :root {
-     --bg:#0b0f14;
-     --panel:#111824;
-     --text:#e7eef8;
-     --muted:#9aa7b8;
-     --border:#243246;
-     --accent:#67b7ff;
-     --bad:#ff7a7a;
- }
+    <head>
+        <meta charset="utf-8">
+        <title>Runway Report</title>
+        <style>
+         :root {
+             --bg:#0b0f14;
+             --panel:#111824;
+             --text:#e7eef8;
+             --muted:#9aa7b8;
+             --border:#243246;
+             --accent:#67b7ff;
+             --bad:#ff7a7a;
+             --wind-pair-gap: 0.001ch;
+             --wind-group-gap: 0.14ch;
+         }
 
- * { box-sizing: border-box; }
+         * { box-sizing: border-box; }
 
- body {
-     background: var(--bg);
-     color: var(--text);
-     font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-     margin: 0;
-     padding: 14px;
-     font-size: 13px;
- }
+         body {
+             background: var(--bg);
+             color: var(--text);
+             font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+             margin: 0;
+             padding: 14px;
+             font-size: 13px;
+         }
 
- h1 {
-     margin: 0 0 8px;
-     font-size: 16px;
-     font-weight: 600;
- }
+         h1 {
+             margin: 0 0 8px;
+             font-size: 16px;
+             font-weight: 600;
+         }
 
- .card {
-     background: var(--panel);
-     border: 1px solid var(--border);
-     border-radius: 8px;
-     padding: 8px 10px 10px;
-     margin-bottom: 10px;
- }
+         .card {
+             background: var(--panel);
+             border: 1px solid var(--border);
+             border-radius: 8px;
+             padding: 8px 10px 10px;
+             margin-bottom: 10px;
+         }
 
- header {
-     display:flex;
-     justify-content: space-between;
-     align-items: baseline;
-     gap: 8px;
-     margin-bottom: 6px;
- }
+         header {
+             display:flex;
+             justify-content: space-between;
+             align-items: baseline;
+             gap: 8px;
+             margin-bottom: 6px;
+         }
 
- .none { color: var(--bad); font-weight: 600; }
+         .none { color: var(--bad); font-weight: 600; }
 
- .badge {
-     font-size: 11px;
-     color: var(--muted);
-     border: 1px solid var(--border);
-     padding: 1px 6px;
-     border-radius: 999px;
-     white-space: nowrap;
- }
+         .badge {
+             font-size: 11px;
+             color: var(--muted);
+             border: 1px solid var(--border);
+             padding: 1px 6px;
+             border-radius: 999px;
+             white-space: nowrap;
+         }
 
- .table-wrap {
-     border: 1px solid var(--border);
-     border-radius: 6px;
-     overflow: hidden;
-     background: rgba(0,0,0,.15);
- }
+         .table-wrap {
+             border: 1px solid var(--border);
+             border-radius: 6px;
+             overflow: hidden;
+             background: rgba(0,0,0,.15);
+         }
 
- table {
-     width: 100%;
-     border-collapse: collapse;
-     table-layout: fixed;
- }
+         table {
+             width: 100%;
+             border-collapse: collapse;
+             table-layout: auto;
+         }
 
- thead th {
-     text-align: left;
-     font-size: 11px;
-     color: var(--muted);
-     padding: 4px 6px;
-     border-bottom: 1px solid var(--border);
-     background: rgba(0,0,0,.25);
-     position: sticky;
-     top: 0;
- }
+         thead th {
+             text-align: left;
+             font-size: 11px;
+             color: var(--muted);
+             padding: 4px 6px;
+             border-bottom: 1px solid var(--border);
+             background: rgba(0,0,0,.25);
+             position: sticky;
+             top: 0;
+         }
 
- tbody td {
-     padding: 0px 2px;
-     border-bottom: 1px dashed rgba(255,255,255,.08);
-     vertical-align: top;
- }
+         tbody td {
+             padding: 0px 2px;
+             border-bottom: 1px dashed rgba(255,255,255,.08);
+             vertical-align: top;
+         }
 
- tbody tr:last-child td { border-bottom: none; }
+         tbody tr:last-child td { border-bottom: none; }
 
-.icao {
-    color: var(--accent);
-    font-weight: 600;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    white-space: nowrap;
-    vertical-align: middle;
-}
+         .icao {
+             color: var(--accent);
+             font-weight: 600;
+             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+             white-space: nowrap;
+             vertical-align: middle;
+         }
 
-.runways {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    white-space: pre-wrap;
-}
+         .runways {
+             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+             white-space: pre-wrap;
+         }
 
-.wind {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    white-space: pre;
-    font-variant-numeric: tabular-nums;
-}
+         .wind {
+             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+             white-space: pre-line;
+             font-variant-numeric: tabular-nums;
+             text-align: center;
+         }
 
- .metar {
-     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-     white-space: pre-wrap;
-     word-break: break-word;
-     line-height: 1.1;
-     font-size: 12px;
-     vertical-align: middle;
- }
+         td.wind {
+             padding-left: 0 !important;
+             padding-right: 0 !important;
+         }
 
- /* column sizing */
- col.col-icao  { width: 7ch; }
- col.col-rwy   { width: 20ch; }
- col.col-wind  { width: 26ch; }
- col.col-metar { width: auto; }
-</style>
-</head>
-<body>
-{% for g in groups %}
-<section class="card">
-  <header>
-    <div class="{{ g.source_class }}">{{ g.source_label }}</div>
-    <div class="badge">{{ g.airports.len() }} airports</div>
-  </header>
+         .wind-sym {
+             padding-left: 0 !important;
+             padding-right: 0 !important;
+         }
 
-  <div class="table-wrap">
-    <table>
-      <colgroup>
-        <col class="col-icao">
-        <col class="col-rwy">
-        <col class="col-wind">
-        <col class="col-metar">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>ICAO</th>
-          <th>Runways</th>
-          <th>Wind Components</th>
-          <th>METAR</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for a in g.airports %}
-        <tr>
-          <td class="icao">{{ a.icao }}</td>
-          <td class="runways">{{ a.runway_text }}</td>
-          <td class="wind">{{ a.wind_text }}</td>
-          <td class="metar">{{ a.metar }}</td>
-        </tr>
+         .wind-val {
+             padding-left: 0 !important;
+             padding-right: 0 !important;
+         }
+
+         .wind-head-arrow,
+         .wind-cross-left {
+             text-align: right;
+             padding-right: var(--wind-pair-gap) !important;
+         }
+
+         .wind-head-value {
+             text-align: center;
+             padding-right: var(--wind-group-gap) !important;
+             padding-left: 0 !important;
+         }
+
+         .wind-cross-left {
+             padding-left: 0 !important;
+         }
+
+         .wind-cross-value {
+             text-align: center;
+             padding-right: var(--wind-pair-gap) !important;
+             padding-left: 0 !important;
+         }
+
+         .wind-cross-right {
+             text-align: left;
+             padding-left: 0 !important;
+         }
+
+         .metar {
+             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+             white-space: pre-wrap;
+             word-break: break-word;
+             line-height: 1.1;
+             font-size: 12px;
+             vertical-align: middle;
+         }
+
+         .comp-width { width: 20ch; }
+
+         /* column sizing */
+         col.col-icao  { width: 6ch; }
+         col.col-rwy   { width: 20ch; }
+         col.col-metar { width: auto; }
+        </style>
+    </head>
+    <body>
+        {% for g in groups %}
+        <section class="card">
+            <header>
+                <div class="{{ g.source_class }}">{{ g.source_label }}</div>
+                <div class="badge">{{ g.airports.len() }} airports</div>
+            </header>
+
+            <div class="table-wrap">
+                <table>
+                    <colgroup>
+                        <col class="col-icao">
+                        <col class="col-rwy">
+                        <col class="col-wind-h-arrow">
+                        <col class="col-wind-h-val">
+                        <col class="col-wind-x-left">
+                        <col class="col-wind-x-val">
+                        <col class="col-wind-x-right">
+                        <col class="col-metar">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>ICAO</th>
+                            <th>Runways</th>
+                            <th colspan="5" class="comp-width">Components</th>
+                            <th>METAR</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for a in g.airports %}
+                        <tr>
+                            <td class="icao">{{ a.icao }}</td>
+                            <td class="runways">{{ a.runway_text }}</td>
+                            <td class="wind wind-sym wind-head-arrow">{{ a.wind_head_arrow_text }}</td>
+                            <td class="wind wind-val wind-head-value">{{ a.wind_head_value_text }}</td>
+                            <td class="wind wind-sym wind-cross-left">{{ a.wind_cross_left_arrow_text }}</td>
+                            <td class="wind wind-val wind-cross-value">{{ a.wind_cross_value_text }}</td>
+                            <td class="wind wind-sym wind-cross-right">{{ a.wind_cross_right_arrow_text }}</td>
+                            <td class="metar">{{ a.metar }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endfor %}
 
-</body>
+    </body>
 </html>

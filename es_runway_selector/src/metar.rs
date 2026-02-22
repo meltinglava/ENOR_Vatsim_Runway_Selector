@@ -29,7 +29,7 @@ pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
 async fn get_metars_from_url(url: &str) -> ApplicationResult<String> {
     let retries = 3;
     let mut first_error = None;
-    for _ in 0..retries {
+    for i in 0..retries {
         let resp = reqwest::ClientBuilder::new()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -44,13 +44,21 @@ async fn get_metars_from_url(url: &str) -> ApplicationResult<String> {
                 match text {
                     Ok(text) => return Ok(text),
                     Err(e) => {
-                        tracing::error!("Failed to get text from {}: {}", url, e);
+                        if i == retries {
+                            tracing::error!("Failed to get text from {}: {}", url, e);
+                        } else {
+                            tracing::warn!("Failed to get text from {}: {}", url, e);
+                        }
                         first_error.get_or_insert(e);
                     }
                 }
             }
             Err(e) => {
-                tracing::error!("Failed to get {}: {}", url, e);
+                if i == retries {
+                    tracing::error!("Failed to get {}: {}", url, e);
+                } else {
+                    tracing::warn!("Failed to get {}: {}", url, e);
+                }
                 first_error.get_or_insert(e);
             }
         }
