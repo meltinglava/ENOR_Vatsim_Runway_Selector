@@ -12,8 +12,10 @@
              --border:#243246;
              --accent:#67b7ff;
              --bad:#ff7a7a;
-             --wind-pair-gap: 0.001ch;
-             --wind-group-gap: 0.14ch;
+             --wind-pair-gap: 2px;
+             --wind-group-gap: 10px;
+             --wind-icon-size: 13px;
+             --components-to-metar-gap: 8px;
          }
 
          * { box-sizing: border-box; }
@@ -70,7 +72,7 @@
          table {
              width: 100%;
              border-collapse: collapse;
-             table-layout: auto;
+             table-layout: fixed;
          }
 
          thead th {
@@ -82,6 +84,10 @@
              background: rgba(0,0,0,.25);
              position: sticky;
              top: 0;
+         }
+
+         thead th:last-child {
+             padding-left: var(--components-to-metar-gap);
          }
 
          tbody td {
@@ -107,12 +113,16 @@
 
          .wind {
              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-             white-space: pre-line;
+             white-space: nowrap;
              font-variant-numeric: tabular-nums;
              text-align: center;
+             vertical-align: middle;
+             line-height: 1;
          }
 
          td.wind {
+             padding-top: 2px !important;
+             padding-bottom: 2px !important;
              padding-left: 0 !important;
              padding-right: 0 !important;
          }
@@ -154,6 +164,25 @@
              padding-left: 0 !important;
          }
 
+         .wind-icon {
+             width: var(--wind-icon-size);
+             height: var(--wind-icon-size);
+             display: inline-block;
+             vertical-align: middle;
+         }
+
+         .wind-icon use {
+             stroke: currentColor;
+             fill: none;
+             stroke-width: 1.7;
+             stroke-linecap: round;
+             stroke-linejoin: round;
+         }
+
+         .wind-icon.calm use {
+             stroke-width: 1.4;
+         }
+
          .metar {
              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
              white-space: pre-wrap;
@@ -161,6 +190,7 @@
              line-height: 1.1;
              font-size: 12px;
              vertical-align: middle;
+             padding-left: var(--components-to-metar-gap);
          }
 
          .comp-width { width: 20ch; }
@@ -168,10 +198,43 @@
          /* column sizing */
          col.col-icao  { width: 6ch; }
          col.col-rwy   { width: 20ch; }
+         col.col-wind-h-arrow { width: 18px; }
+         col.col-wind-h-val { width: 3ch; }
+         col.col-wind-x-left { width: 18px; }
+         col.col-wind-x-val { width: 3ch; }
+         col.col-wind-x-right { width: 18px; }
          col.col-metar { width: auto; }
+
+         th.comp-width {
+             text-align: center;
+             width: 13ch;
+         }
         </style>
     </head>
     <body>
+        <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute;left:-9999px;overflow:hidden">
+            <defs>
+                <symbol id="wind-icon-up" viewBox="0 0 16 16">
+                    <path d="M8 14V3"></path>
+                    <path d="M4.5 6.5 8 3l3.5 3.5"></path>
+                </symbol>
+                <symbol id="wind-icon-down" viewBox="0 0 16 16">
+                    <path d="M8 2v11"></path>
+                    <path d="M4.5 9.5 8 13l3.5-3.5"></path>
+                </symbol>
+                <symbol id="wind-icon-right" viewBox="0 0 16 16">
+                    <path d="M2 8h11"></path>
+                    <path d="M9.5 4.5 13 8l-3.5 3.5"></path>
+                </symbol>
+                <symbol id="wind-icon-left" viewBox="0 0 16 16">
+                    <path d="M14 8H3"></path>
+                    <path d="M6.5 4.5 3 8l3.5 3.5"></path>
+                </symbol>
+                <symbol id="wind-icon-calm" viewBox="0 0 16 16">
+                    <circle cx="8" cy="8" r="4.5"></circle>
+                </symbol>
+            </defs>
+        </svg>
         {% for g in groups %}
         <section class="card">
             <header>
@@ -204,11 +267,43 @@
                         <tr>
                             <td class="icao">{{ a.icao }}</td>
                             <td class="runways">{{ a.runway_text }}</td>
-                            <td class="wind wind-sym wind-head-arrow">{{ a.wind_head_arrow_text }}</td>
+                            <td class="wind wind-sym wind-head-arrow">
+                                {% if a.wind_head_arrow_text == "↑" %}
+                                <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-up"></use></svg>
+                                {% elif a.wind_head_arrow_text == "↓" %}
+                                <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-down"></use></svg>
+                                {% elif a.wind_head_arrow_text == "○" %}
+                                <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
+                                {% else %}
+                                {{ a.wind_head_arrow_text }}
+                                {% endif %}
+                            </td>
                             <td class="wind wind-val wind-head-value">{{ a.wind_head_value_text }}</td>
-                            <td class="wind wind-sym wind-cross-left">{{ a.wind_cross_left_arrow_text }}</td>
-                            <td class="wind wind-val wind-cross-value">{{ a.wind_cross_value_text }}</td>
-                            <td class="wind wind-sym wind-cross-right">{{ a.wind_cross_right_arrow_text }}</td>
+                            <td class="wind wind-sym wind-cross-left">
+                                {% if a.wind_cross_left_arrow_text == "→" %}
+                                <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-right"></use></svg>
+                                {% elif a.wind_cross_left_arrow_text == "○" %}
+                                <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
+                                {% else %}
+                                {{ a.wind_cross_left_arrow_text }}
+                                {% endif %}
+                            </td>
+                            <td class="wind wind-val wind-cross-value">
+                                {% if a.wind_cross_value_text == "○" %}
+                                <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
+                                {% else %}
+                                {{ a.wind_cross_value_text }}
+                                {% endif %}
+                            </td>
+                            <td class="wind wind-sym wind-cross-right">
+                                {% if a.wind_cross_right_arrow_text == "←" %}
+                                <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-left"></use></svg>
+                                {% elif a.wind_cross_right_arrow_text == "○" %}
+                                <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
+                                {% else %}
+                                {{ a.wind_cross_right_arrow_text }}
+                                {% endif %}
+                            </td>
                             <td class="metar">{{ a.metar }}</td>
                         </tr>
                         {% endfor %}
