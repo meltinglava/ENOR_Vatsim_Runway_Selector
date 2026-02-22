@@ -671,9 +671,9 @@ pub struct RunwaySourceGroupView {
 #[derive(Debug)]
 pub struct AirportRunwayView {
     pub icao: String,
-    pub runway_text: String,          // "27 Arr + 09 Dep" or "(no selection)"
+    pub runway_text: String, // "27 Arr + 09 Dep" or "(no selection)"
     #[allow(unused)]
-    pub wind_text: String,            // "↑8 →3", "↓6 ←4", or "○"
+    pub wind_text: String, // "↑8 →3", "↓6 ←4", or "○"
     pub wind_head_arrow_text: String, // "↑", "↓", or "○"
     pub wind_head_value_text: String, // "8", "6", or ""
     pub wind_cross_left_arrow_text: String, // "→" or ""

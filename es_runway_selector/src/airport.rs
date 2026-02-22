@@ -339,9 +339,9 @@ impl Airport {
             // If the secondary runway has a lower crosswind, we use it
             let mut map = IndexMap::new();
             map.insert(secondary_runway, RunwayUse::Both);
-            return Ok(map);
+            Ok(map)
         } else {
-            return default_fallback;
+            default_fallback
         }
     }
 
