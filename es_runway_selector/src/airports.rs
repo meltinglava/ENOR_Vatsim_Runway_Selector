@@ -410,8 +410,8 @@ impl Airports {
     fn format_wind_components(components: RunwayWindComponents) -> String {
         const CALM_THRESHOLD: i32 = 1;
         const CALM: &str = "○";
-        const HEADWIND: &str = "↑";
-        const TAILWIND: &str = "↓";
+        const HEADWIND: &str = "↓";
+        const TAILWIND: &str = "↑";
         const INWARD_FROM_LEFT: &str = "→";
         const INWARD_FROM_RIGHT: &str = "←";
         const INWARD_FROM_BOTH_LEFT: &str = "→";
