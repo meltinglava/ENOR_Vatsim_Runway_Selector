@@ -40,6 +40,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cargo-alpine-musl
           cache-on-failure: true
 
       - name: Rustfmt (check)
@@ -83,6 +84,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cargo-alpine-musl
           cache-on-failure: true
 
       - name: Build (release, musl)
@@ -132,6 +134,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cargo-windows-msvc
           cache-on-failure: true
 
       - name: Build (release)
