@@ -27,6 +27,28 @@ type AirportsConfigReportData =
     IndexMap<Option<RunwayInUseSource>, Vec<(String, IndexMap<String, RunwayUse>)>>;
 type WindColumnParts = (String, String, String, String, String);
 
+const CALM_THRESHOLD: i32 = 1;
+const CALM_SYMBOL: &str = "○";
+const HEADWIND_ARROW: &str = "↓";
+const TAILWIND_ARROW: &str = "↑";
+const CROSSWIND_FROM_LEFT_ARROW: &str = "→";
+const CROSSWIND_FROM_RIGHT_ARROW: &str = "←";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LongitudinalWindDisplay {
+    Calm,
+    Headwind(i32),
+    Tailwind(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CrosswindDisplay {
+    Calm,
+    FromLeft(i32),
+    FromRight(i32),
+    Variable(i32),
+}
+
 impl Airports {
     pub fn new() -> Self {
         Self {
@@ -408,83 +430,89 @@ impl Airports {
     }
 
     fn format_wind_components(components: RunwayWindComponents) -> String {
-        const CALM_THRESHOLD: i32 = 1;
-        const CALM: &str = "○";
-        const HEADWIND: &str = "↓";
-        const TAILWIND: &str = "↑";
-        const INWARD_FROM_LEFT: &str = "→";
-        const INWARD_FROM_RIGHT: &str = "←";
-        const INWARD_FROM_BOTH_LEFT: &str = "→";
-        const INWARD_FROM_BOTH_RIGHT: &str = "←";
+        let (longitudinal_wind, crosswind) = Self::wind_display_parts(&components);
 
-        let longitudinal = if components.headwind > CALM_THRESHOLD {
-            format!("{HEADWIND}{:>2}", components.headwind)
-        } else if components.headwind < -CALM_THRESHOLD {
-            format!("{TAILWIND}{:>2}", components.headwind.abs())
-        } else {
-            format!("{CALM}  ")
+        let longitudinal = match longitudinal_wind {
+            LongitudinalWindDisplay::Calm => format!("{CALM_SYMBOL}  "),
+            LongitudinalWindDisplay::Headwind(value) => {
+                format!("{HEADWIND_ARROW}{value:>2}")
+            }
+            LongitudinalWindDisplay::Tailwind(value) => {
+                format!("{TAILWIND_ARROW}{value:>2}")
+            }
         };
 
-        let cross = if components.crosswind > CALM_THRESHOLD {
-            match components.crosswind_direction {
-                CrosswindDirection::Left => {
-                    format!("{INWARD_FROM_LEFT}{:>2} ", components.crosswind)
-                }
-                CrosswindDirection::Right => {
-                    format!(" {:>2}{INWARD_FROM_RIGHT}", components.crosswind)
-                }
-                CrosswindDirection::Variable => {
-                    format!(
-                        "{INWARD_FROM_BOTH_LEFT}{:>2}{INWARD_FROM_BOTH_RIGHT}",
-                        components.crosswind
-                    )
-                }
+        let cross = match crosswind {
+            CrosswindDisplay::Calm => format!(" {CALM_SYMBOL}  "),
+            CrosswindDisplay::FromLeft(value) => {
+                format!("{CROSSWIND_FROM_LEFT_ARROW}{value:>2} ")
             }
-        } else {
-            format!(" {CALM}  ")
+            CrosswindDisplay::FromRight(value) => {
+                format!(" {value:>2}{CROSSWIND_FROM_RIGHT_ARROW}")
+            }
+            CrosswindDisplay::Variable(value) => {
+                format!("{CROSSWIND_FROM_LEFT_ARROW}{value:>2}{CROSSWIND_FROM_RIGHT_ARROW}")
+            }
         };
 
         format!("{longitudinal} {cross}")
     }
 
-    fn format_wind_columns(components: &RunwayWindComponents) -> WindColumnParts {
-        const CALM_THRESHOLD: i32 = 1;
-        const CALM: &str = "○";
-        const HEADWIND: &str = "↑";
-        const TAILWIND: &str = "↓";
-        const INWARD_FROM_LEFT: &str = "→";
-        const INWARD_FROM_RIGHT: &str = "←";
-
-        let (head_arrow, head_value) = if components.headwind > CALM_THRESHOLD {
-            (HEADWIND.to_string(), components.headwind.to_string())
+    fn wind_display_parts(
+        components: &RunwayWindComponents,
+    ) -> (LongitudinalWindDisplay, CrosswindDisplay) {
+        let longitudinal = if components.headwind > CALM_THRESHOLD {
+            LongitudinalWindDisplay::Headwind(components.headwind)
         } else if components.headwind < -CALM_THRESHOLD {
-            (TAILWIND.to_string(), components.headwind.abs().to_string())
+            LongitudinalWindDisplay::Tailwind(components.headwind.abs())
         } else {
-            (CALM.to_string(), String::new())
+            LongitudinalWindDisplay::Calm
         };
 
-        let (cross_left_arrow, cross_value, cross_right_arrow) =
-            if components.crosswind <= CALM_THRESHOLD {
-                (String::new(), CALM.to_string(), String::new())
-            } else {
-                match components.crosswind_direction {
-                    CrosswindDirection::Left => (
-                        INWARD_FROM_LEFT.to_string(),
-                        components.crosswind.to_string(),
-                        String::new(),
-                    ),
-                    CrosswindDirection::Right => (
-                        String::new(),
-                        components.crosswind.to_string(),
-                        INWARD_FROM_RIGHT.to_string(),
-                    ),
-                    CrosswindDirection::Variable => (
-                        INWARD_FROM_LEFT.to_string(),
-                        components.crosswind.to_string(),
-                        INWARD_FROM_RIGHT.to_string(),
-                    ),
-                }
-            };
+        let crosswind = if components.crosswind <= CALM_THRESHOLD {
+            CrosswindDisplay::Calm
+        } else {
+            match components.crosswind_direction {
+                CrosswindDirection::Left => CrosswindDisplay::FromLeft(components.crosswind),
+                CrosswindDirection::Right => CrosswindDisplay::FromRight(components.crosswind),
+                CrosswindDirection::Variable => CrosswindDisplay::Variable(components.crosswind),
+            }
+        };
+
+        (longitudinal, crosswind)
+    }
+
+    fn format_wind_columns(components: &RunwayWindComponents) -> WindColumnParts {
+        let (longitudinal_wind, crosswind) = Self::wind_display_parts(components);
+
+        let (head_arrow, head_value) = match longitudinal_wind {
+            LongitudinalWindDisplay::Calm => (CALM_SYMBOL.to_string(), String::new()),
+            LongitudinalWindDisplay::Headwind(value) => {
+                (HEADWIND_ARROW.to_string(), value.to_string())
+            }
+            LongitudinalWindDisplay::Tailwind(value) => {
+                (TAILWIND_ARROW.to_string(), value.to_string())
+            }
+        };
+
+        let (cross_left_arrow, cross_value, cross_right_arrow) = match crosswind {
+            CrosswindDisplay::Calm => (String::new(), CALM_SYMBOL.to_string(), String::new()),
+            CrosswindDisplay::FromLeft(value) => (
+                CROSSWIND_FROM_LEFT_ARROW.to_string(),
+                value.to_string(),
+                String::new(),
+            ),
+            CrosswindDisplay::FromRight(value) => (
+                String::new(),
+                value.to_string(),
+                CROSSWIND_FROM_RIGHT_ARROW.to_string(),
+            ),
+            CrosswindDisplay::Variable(value) => (
+                CROSSWIND_FROM_LEFT_ARROW.to_string(),
+                value.to_string(),
+                CROSSWIND_FROM_RIGHT_ARROW.to_string(),
+            ),
+        };
 
         (
             head_arrow,
@@ -848,6 +876,44 @@ pub(crate) mod tests {
         assert_eq!(cross_left_arrow, "→");
         assert_eq!(cross_value, "12");
         assert_eq!(cross_right_arrow, "←");
+    }
+
+    #[test]
+    fn test_wind_column_head_and_tail_arrows_match_report_orientation() {
+        let (head_arrow, head_value, _, _, _) =
+            Airports::format_wind_columns(&RunwayWindComponents {
+                headwind: 8,
+                crosswind: 0,
+                crosswind_direction: CrosswindDirection::Left,
+            });
+        assert_eq!(head_arrow, "↓");
+        assert_eq!(head_value, "8");
+
+        let (tail_arrow, tail_value, _, _, _) =
+            Airports::format_wind_columns(&RunwayWindComponents {
+                headwind: -6,
+                crosswind: 0,
+                crosswind_direction: CrosswindDirection::Left,
+            });
+        assert_eq!(tail_arrow, "↑");
+        assert_eq!(tail_value, "6");
+    }
+
+    #[test]
+    fn test_compact_wind_head_and_tail_arrows_match_report_orientation() {
+        let head_text = Airports::format_wind_components(RunwayWindComponents {
+            headwind: 8,
+            crosswind: 0,
+            crosswind_direction: CrosswindDirection::Left,
+        });
+        assert!(head_text.starts_with("↓ 8"));
+
+        let tail_text = Airports::format_wind_components(RunwayWindComponents {
+            headwind: -6,
+            crosswind: 0,
+            crosswind_direction: CrosswindDirection::Left,
+        });
+        assert!(tail_text.starts_with("↑ 6"));
     }
 
     #[test]
