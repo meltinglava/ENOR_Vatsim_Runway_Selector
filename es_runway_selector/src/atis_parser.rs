@@ -6,23 +6,30 @@ use crate::runway::RunwayUse;
 
 pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
     static SINGLE_POST: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bRUNWAY ([0-9]{2}[LRC]*) IN USE\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\bRUNWAY ([0-9]{2}[LRC]*) IN USE\b").unwrap());
 
     static SINGLE_PRE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bRUNWAY IN USE ([0-9]{2}[LRC]*)\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\bRUNWAY IN USE ([0-9]{2}[LRC]*)\b").unwrap());
 
     static ARR: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bAPPROACH (?:RWY|RUNWAY) ([0-9]{2}[LRC]*)\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\bAPPROACH (?:RWY|RUNWAY) ([0-9]{2}[LRC]*)\b").unwrap());
 
     static DEP: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\bDEPARTURE RUNWAY ([0-9]{2}[LRC]*)\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\bDEPARTURE RUNWAY ([0-9]{2}[LRC]*)\b").unwrap());
 
     static MULTI: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\bRUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE\b").unwrap()
+        Regex::new(r"(?i)\bRUNWAYS ([0-9]{2}[LRC]*) AND ([0-9]{2}[LRC]*) IN USE\b").unwrap()
     });
 
-    let is_arrival = atis.contains(" ARRIVAL INFORMATION ");
-    let is_departure = atis.contains(" DEPARTURE INFORMATION ");
+    static ARR_INFO: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\bARRIVAL INFORMATION\b").unwrap());
+    static DEP_INFO: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\bDEPARTURE INFORMATION\b").unwrap());
+    static DEP_OR_APP_PREFIX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b(?:DEPARTURE|APPROACH)\b").unwrap());
+
+    let is_arrival = ARR_INFO.is_match(atis);
+    let is_departure = DEP_INFO.is_match(atis);
 
     let mut runways = IndexMap::new();
 
@@ -58,7 +65,7 @@ pub fn find_runway_in_use_from_atis(atis: &str) -> IndexMap<String, RunwayUse> {
         let window_start = start.saturating_sub(20);
         let prefix = &atis[window_start..start];
 
-        if prefix.contains("DEPARTURE ") || prefix.contains("APPROACH ") {
+        if DEP_OR_APP_PREFIX.is_match(prefix) {
             continue;
         }
 
@@ -126,5 +133,18 @@ mod tests {
         let ed = Some(("01L".to_owned(), RunwayUse::Departing));
         assert_eq!(ea, a.into_iter().next());
         assert_eq!(ed, d.into_iter().next());
+    }
+
+    #[test]
+    fn test_engm_parser() {
+        let atis = "Oslo Gardermoen Information November .. time 0920 .. Expect ILS or RNP approach Runway 19R .. Departure runway 19L in use .. Transition level 80 ..  ADVISE IF DE-ICE IS REQUIRED ON FIRST CONTACT WITH ATC  .. For clearance and start up, contact Tower 118.305 .. Low visibility procedures Category 3 in operation .. Met Report .. wind calm .. Visibility 3200 meters .. 350 meters direction South West .. Clouds BKN 400 FT .. Aerodrome partially covered by fog and mist .. TMP 2 DP 1 .. QNH 1028 .. RVR Runway 19R more than 2000 meters no change .. Runway 01R more than 2000 meters no change .. Runway 19L more than 2000 meters no change .. Runway 01L 450 meters no change .. Acknowledge information November on first contact.";
+        let a = find_runway_in_use_from_atis(atis);
+        let exptected: IndexMap<_, _> = [
+            ("19L".to_owned(), RunwayUse::Departing),
+            ("19R".to_owned(), RunwayUse::Arriving),
+        ]
+        .into();
+
+        assert_eq!(a, exptected);
     }
 }
