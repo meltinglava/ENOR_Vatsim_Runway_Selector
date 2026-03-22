@@ -300,52 +300,6 @@ impl Airports {
             })
     }
 
-    fn format_wind_components_for_selection(
-        airport: &Airport,
-        runways: &IndexMap<String, RunwayUse>,
-    ) -> String {
-        if runways.is_empty() {
-            return String::new();
-        }
-
-        let show_runway_identifier = Self::should_split_runway_lines(airport, runways);
-        let mut values = runways
-            .keys()
-            .map(|runway| {
-                let components = Self::runway_direction_for_identifier(airport, runway)
-                    .and_then(|direction| airport.runway_wind_components(direction));
-
-                match components {
-                    Some(components) => {
-                        let component_text = Self::format_wind_components(components);
-                        if show_runway_identifier {
-                            format!("{runway:<3} {component_text}")
-                        } else {
-                            component_text
-                        }
-                    }
-                    None => {
-                        if show_runway_identifier {
-                            format!("{runway:<3} n/a    ")
-                        } else {
-                            "n/a".to_string()
-                        }
-                    }
-                }
-            })
-            .collect_vec();
-
-        if !show_runway_identifier {
-            values = values.into_iter().unique().collect_vec();
-        }
-
-        if show_runway_identifier {
-            values.join("\n")
-        } else {
-            values.join("  +  ")
-        }
-    }
-
     fn format_wind_component_columns_for_selection(
         airport: &Airport,
         runways: &IndexMap<String, RunwayUse>,
@@ -427,35 +381,6 @@ impl Airports {
             .iter()
             .tuple_combinations()
             .all(|(left, right)| left.degrees % 180 == right.degrees % 180)
-    }
-
-    fn format_wind_components(components: RunwayWindComponents) -> String {
-        let (longitudinal_wind, crosswind) = Self::wind_display_parts(&components);
-
-        let longitudinal = match longitudinal_wind {
-            LongitudinalWindDisplay::Calm => format!("{CALM_SYMBOL}  "),
-            LongitudinalWindDisplay::Headwind(value) => {
-                format!("{HEADWIND_ARROW}{value:>2}")
-            }
-            LongitudinalWindDisplay::Tailwind(value) => {
-                format!("{TAILWIND_ARROW}{value:>2}")
-            }
-        };
-
-        let cross = match crosswind {
-            CrosswindDisplay::Calm => format!(" {CALM_SYMBOL}  "),
-            CrosswindDisplay::FromLeft(value) => {
-                format!("{CROSSWIND_FROM_LEFT_ARROW}{value:>2} ")
-            }
-            CrosswindDisplay::FromRight(value) => {
-                format!(" {value:>2}{CROSSWIND_FROM_RIGHT_ARROW}")
-            }
-            CrosswindDisplay::Variable(value) => {
-                format!("{CROSSWIND_FROM_LEFT_ARROW}{value:>2}{CROSSWIND_FROM_RIGHT_ARROW}")
-            }
-        };
-
-        format!("{longitudinal} {cross}")
     }
 
     fn wind_display_parts(
@@ -559,6 +484,61 @@ impl Airports {
         }
     }
 
+    fn split_report_lines(value: &str) -> Vec<String> {
+        value.split('\n').map(ToOwned::to_owned).collect()
+    }
+
+    fn build_report_lines_for_row(
+        airport: Option<&Airport>,
+        runways: &IndexMap<String, RunwayUse>,
+    ) -> Vec<AirportRunwayLineView> {
+        let runway_text = if runways.is_empty() {
+            "(no selection)".to_string()
+        } else {
+            match airport {
+                Some(airport) => Self::format_runway_usage_for_selection(airport, runways),
+                None => Self::format_runway_usage(runways).unwrap_or_default(),
+            }
+        };
+
+        let wind_columns = Self::format_wind_component_columns_for_row(airport, runways);
+        let runway_lines = Self::split_report_lines(&runway_text);
+        let head_arrow_lines = Self::split_report_lines(&wind_columns.0);
+        let head_value_lines = Self::split_report_lines(&wind_columns.1);
+        let cross_left_arrow_lines = Self::split_report_lines(&wind_columns.2);
+        let cross_value_lines = Self::split_report_lines(&wind_columns.3);
+        let cross_right_arrow_lines = Self::split_report_lines(&wind_columns.4);
+
+        let line_count = [
+            runway_lines.len(),
+            head_arrow_lines.len(),
+            head_value_lines.len(),
+            cross_left_arrow_lines.len(),
+            cross_value_lines.len(),
+            cross_right_arrow_lines.len(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(1);
+
+        (0..line_count)
+            .map(|index| AirportRunwayLineView {
+                runway_text: runway_lines.get(index).cloned().unwrap_or_default(),
+                wind_head_arrow_text: head_arrow_lines.get(index).cloned().unwrap_or_default(),
+                wind_head_value_text: head_value_lines.get(index).cloned().unwrap_or_default(),
+                wind_cross_left_arrow_text: cross_left_arrow_lines
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_default(),
+                wind_cross_value_text: cross_value_lines.get(index).cloned().unwrap_or_default(),
+                wind_cross_right_arrow_text: cross_right_arrow_lines
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
+
     pub fn make_runway_report_html(&self) -> io::Result<()> {
         let mut file = tempfile::Builder::new()
             .prefix("runways_")
@@ -597,64 +577,14 @@ impl Airports {
             let mut airports = Vec::with_capacity(configs.len());
 
             for (icao, runways) in configs {
-                let (
-                    runway_text,
-                    wind_text,
-                    wind_head_arrow_text,
-                    wind_head_value_text,
-                    wind_cross_left_arrow_text,
-                    wind_cross_value_text,
-                    wind_cross_right_arrow_text,
-                ) = if runways.is_empty() {
-                    (
-                        "(no selection)".to_string(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    )
-                } else {
-                    let airport = self.airports.get(icao);
-                    let (
-                        wind_head_arrow_text,
-                        wind_head_value_text,
-                        wind_cross_left_arrow_text,
-                        wind_cross_value_text,
-                        wind_cross_right_arrow_text,
-                    ) = Self::format_wind_component_columns_for_row(airport, runways);
-                    let (runway_text, wind_text) = match airport {
-                        Some(airport) => (
-                            Self::format_runway_usage_for_selection(airport, runways),
-                            Self::format_wind_components_for_selection(airport, runways),
-                        ),
-                        None => (
-                            Self::format_runway_usage(runways).unwrap_or_default(),
-                            "(missing airport)".to_string(),
-                        ),
-                    };
-                    (
-                        runway_text,
-                        wind_text,
-                        wind_head_arrow_text,
-                        wind_head_value_text,
-                        wind_cross_left_arrow_text,
-                        wind_cross_value_text,
-                        wind_cross_right_arrow_text,
-                    )
-                };
+                let airport = self.airports.get(icao);
+                let lines = Self::build_report_lines_for_row(airport, runways);
                 let metar = self.metar_text_for_airport(icao);
 
                 airports.push(AirportRunwayView {
                     icao: icao.clone(),
-                    runway_text,
-                    wind_text,
-                    wind_head_arrow_text,
-                    wind_head_value_text,
-                    wind_cross_left_arrow_text,
-                    wind_cross_value_text,
-                    wind_cross_right_arrow_text,
+                    line_count: lines.len(),
+                    lines,
                     metar,
                 });
             }
@@ -699,15 +629,19 @@ pub struct RunwaySourceGroupView {
 #[derive(Debug)]
 pub struct AirportRunwayView {
     pub icao: String,
-    pub runway_text: String, // "27 Arr + 09 Dep" or "(no selection)"
-    #[allow(unused)]
-    pub wind_text: String, // "↑8 →3", "↓6 ←4", or "○"
-    pub wind_head_arrow_text: String, // "↑", "↓", or "○"
-    pub wind_head_value_text: String, // "8", "6", or ""
-    pub wind_cross_left_arrow_text: String, // "→" or ""
-    pub wind_cross_value_text: String, // "3", "5", or "○"
-    pub wind_cross_right_arrow_text: String, // "←" or ""
+    pub line_count: usize,
+    pub lines: Vec<AirportRunwayLineView>,
     pub metar: String,
+}
+
+#[derive(Debug)]
+pub struct AirportRunwayLineView {
+    pub runway_text: String,
+    pub wind_head_arrow_text: String,
+    pub wind_head_value_text: String,
+    pub wind_cross_left_arrow_text: String,
+    pub wind_cross_value_text: String,
+    pub wind_cross_right_arrow_text: String,
 }
 
 #[derive(Template)]
@@ -758,6 +692,21 @@ pub(crate) mod tests {
         aps.airports.pop().unwrap().1
     }
 
+    fn make_issue20_enzv_airports() -> Airports {
+        let mut airport = make_test_airport("ENZV 191650Z 30005KT CAVOK 08/04 Q1026 NOSIG");
+        airport.runways_in_use = IndexMap::from([(
+            RunwayInUseSource::Metar,
+            IndexMap::from([
+                ("36".to_string(), RunwayUse::Both),
+                ("28".to_string(), RunwayUse::Both),
+            ]),
+        )]);
+
+        Airports {
+            airports: IndexMap::from([(airport.icao.clone(), airport)]),
+        }
+    }
+
     #[test]
     fn test_engm_variable_to_segregated_name() {
         let metar = "ENGM 080920Z VRB03KT 9999 -SHSN OVC009 M09/M12 Q1024 NOSIG";
@@ -789,36 +738,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_wind_text_omits_runway_identifier_for_single_and_parallel_selection() {
-        let airport = make_test_airport("ENGM 011200Z 02006KT 9999 BKN020 M01/M04 Q1020 NOSIG");
-        let single = IndexMap::from([("01L".to_string(), RunwayUse::Both)]);
-        let parallel = IndexMap::from([
-            ("01L".to_string(), RunwayUse::Both),
-            ("01R".to_string(), RunwayUse::Both),
-        ]);
-
-        let single_text = Airports::format_wind_components_for_selection(&airport, &single);
-        let parallel_text = Airports::format_wind_components_for_selection(&airport, &parallel);
-
-        assert!(!single_text.contains("01L"));
-        assert!(!parallel_text.contains("01L"));
-        assert!(!parallel_text.contains("01R"));
-    }
-
-    #[test]
-    fn test_wind_text_includes_runway_identifier_for_non_parallel_selection() {
-        let airport = make_test_airport("ENZV 011200Z 08010KT 9999 OVC010 08/07 Q1001");
-        let selection = IndexMap::from([
-            ("10".to_string(), RunwayUse::Both),
-            ("18".to_string(), RunwayUse::Both),
-        ]);
-
-        let text = Airports::format_wind_components_for_selection(&airport, &selection);
-        assert!(text.contains("10"));
-        assert!(text.contains("18"));
-    }
-
-    #[test]
     fn test_wind_text_dual_runway_in_use_source() {
         let mut airport = make_test_airport("ENZV 011200Z 05030KT CAVOK 20/20 Q1013");
 
@@ -836,31 +755,9 @@ pub(crate) mod tests {
             &airport,
             &airport.runways_in_use[&RunwayInUseSource::Metar],
         );
-        let wind_text = Airports::format_wind_components_for_selection(
-            &airport,
-            &airport.runways_in_use[&RunwayInUseSource::Metar],
-        );
 
         assert!(runway_text.contains('\n'));
         assert_eq!(runway_text.lines().count(), 2);
-        assert!(wind_text.contains('\n'));
-        assert_eq!(wind_text.lines().count(), 2);
-        assert!(!wind_text.contains("  +  "));
-
-        let first_wind = wind_text.lines().next().unwrap_or_default();
-        let second_wind = wind_text.lines().nth(1).unwrap_or_default();
-        assert!(first_wind.starts_with("36 "));
-        assert!(second_wind.starts_with("10 "));
-    }
-
-    #[test]
-    fn test_variable_crosswind_renders_arrows_on_both_sides() {
-        let text = Airports::format_wind_components(RunwayWindComponents {
-            headwind: 0,
-            crosswind: 12,
-            crosswind_direction: CrosswindDirection::Variable,
-        });
-        assert!(text.contains("→12←"));
     }
 
     #[test]
@@ -900,23 +797,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_compact_wind_head_and_tail_arrows_match_report_orientation() {
-        let head_text = Airports::format_wind_components(RunwayWindComponents {
-            headwind: 8,
-            crosswind: 0,
-            crosswind_direction: CrosswindDirection::Left,
-        });
-        assert!(head_text.starts_with("↓ 8"));
-
-        let tail_text = Airports::format_wind_components(RunwayWindComponents {
-            headwind: -6,
-            crosswind: 0,
-            crosswind_direction: CrosswindDirection::Left,
-        });
-        assert!(tail_text.starts_with("↑ 6"));
-    }
-
-    #[test]
     fn test_wind_component_columns_split_when_non_parallel_runways_are_in_use() {
         let airport = make_test_airport("ENZV 011200Z 05030KT CAVOK 20/20 Q1013");
         let selection = IndexMap::from([
@@ -935,35 +815,56 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_wind_text_uses_calm_symbol_and_no_config_has_single_no_selection_marker() {
-        let airport = make_test_airport("ENHV 011200Z 00000KT 9999 OVC010 08/07 Q1001");
-        let selection = IndexMap::from([("08".to_string(), RunwayUse::Both)]);
-        let wind_text = Airports::format_wind_components_for_selection(&airport, &selection);
-        assert!(wind_text.contains('○'));
-        assert_eq!(wind_text.chars().count(), 8);
-
-        let stronger_headwind_airport =
-            make_test_airport("ENHV 011200Z 08015KT 9999 OVC010 08/07 Q1001");
-        let stronger_wind_text =
-            Airports::format_wind_components_for_selection(&stronger_headwind_airport, &selection);
-        assert_eq!(
-            wind_text.chars().count(),
-            stronger_wind_text.chars().count()
-        );
-
-        let no_config_airport = make_test_airport("ENHV 011200Z 08010KT 9999 OVC010 08/07 Q1001");
-        let airports = Airports {
-            airports: IndexMap::from([(no_config_airport.icao.clone(), no_config_airport)]),
-        };
-        let report_data = IndexMap::from([(None, vec![("ENHV".to_string(), IndexMap::new())])]);
+    fn test_report_view_splits_non_parallel_selection_into_aligned_lines() {
+        let airports = make_issue20_enzv_airports();
+        let report_data = airports.grouped_runway_config_report_data();
         let view = airports.build_runway_report_view(&report_data);
         let row = &view.groups[0].airports[0];
-        assert_eq!(row.runway_text, "(no selection)");
-        assert_eq!(row.wind_text, "");
-        assert_eq!(row.wind_head_arrow_text, "");
-        assert_eq!(row.wind_head_value_text, "");
-        assert_eq!(row.wind_cross_left_arrow_text, "");
-        assert_eq!(row.wind_cross_value_text, "");
-        assert_eq!(row.wind_cross_right_arrow_text, "");
+
+        assert_eq!(row.line_count, 2);
+        assert_eq!(row.lines[0].runway_text, "36");
+        assert_eq!(row.lines[0].wind_head_arrow_text, "↓");
+        assert_eq!(row.lines[0].wind_head_value_text, "3");
+        assert_eq!(row.lines[0].wind_cross_left_arrow_text, "→");
+        assert_eq!(row.lines[0].wind_cross_value_text, "5");
+        assert_eq!(row.lines[0].wind_cross_right_arrow_text, "");
+
+        assert_eq!(row.lines[1].runway_text, "28");
+        assert_eq!(row.lines[1].wind_head_arrow_text, "↓");
+        assert_eq!(row.lines[1].wind_head_value_text, "5");
+        assert_eq!(row.lines[1].wind_cross_left_arrow_text, "");
+        assert_eq!(row.lines[1].wind_cross_value_text, "2");
+        assert_eq!(row.lines[1].wind_cross_right_arrow_text, "←");
+    }
+
+    #[test]
+    fn test_report_html_renders_non_parallel_selection_as_rowspans() {
+        let airports = make_issue20_enzv_airports();
+
+        let mut rendered = Vec::new();
+        airports
+            .make_runway_report_html_with_writer(&mut rendered)
+            .unwrap();
+        let html = String::from_utf8(rendered).unwrap();
+
+        assert!(html.contains("rowspan=\"2\">ENZV</td>"));
+        assert!(html.contains("rowspan=\"2\">ENZV 191650Z 30005KT CAVOK 08/04 Q1026 NOSIG</td>"));
+        assert!(!html.contains("36\n28"));
+        assert!(!html.contains("↓\n↓"));
+    }
+
+    #[test]
+    #[ignore = "writes a manual inspection artifact to /tmp"]
+    fn write_issue20_demo_report() {
+        let airports = make_issue20_enzv_airports();
+        let mut rendered = Vec::new();
+        airports
+            .make_runway_report_html_with_writer(&mut rendered)
+            .unwrap();
+
+        let path = "/tmp/issue20_enzv_report.html";
+        std::fs::write(path, rendered).unwrap();
+
+        assert!(std::path::Path::new(path).exists());
     }
 }

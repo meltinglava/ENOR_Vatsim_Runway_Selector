@@ -9,8 +9,8 @@ repository.workspace = true
 
 [dependencies]
 askama = { version = "0.15.4", default-features = false, features = ["derive", "std"] }
-clap = { version = "4.5.60", features = ["derive"] }
-config = { version = "0.15.19", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
+clap = { version = "4.6.0", features = ["derive"] }
+config = { version = "0.15.21", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
 directories = "6.0.0"
 encoding = "0.2.33"
 futures = { workspace = true }
@@ -25,26 +25,26 @@ reqwest = { workspace = true }
 self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rustls", "archive-tar"], default-features = false }
 serde = { workspace = true }
 serde_with = { workspace = true }
-tempfile = "3.25.0"
+tempfile = "3.27.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { version = "1.0.3", features = ["preserve_order"] }
+toml = { version = "1.0.6", features = ["preserve_order"] }
 tracing = { workspace = true }
 tracing-appender = "0.2.4"
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
 vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }
 walkdir = "2.5.0"
-whoami = { version = "2.1.0", default-features = false, features = ["std"] }
+whoami = { version = "2.1.1", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 rfd = "0.17.2"
 
 [target.'cfg(windows)'.dependencies]
-sysinfo = { version = "0.38.2", default-features = false, features = ["system", "windows", "serde"] }
+sysinfo = { version = "0.38.4", default-features = false, features = ["system", "windows", "serde"] }
 
 [target.'cfg(not(windows))'.dependencies]
-sysinfo = { version = "0.38.2", default-features = false, features = ["system", "serde"]}
+sysinfo = { version = "0.38.4", default-features = false, features = ["system", "serde"]}
 
 [dev-dependencies]
 tracing-test = { workspace = true }

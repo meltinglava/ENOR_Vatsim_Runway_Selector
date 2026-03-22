@@ -108,7 +108,8 @@
 
          .runways {
              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-             white-space: pre-wrap;
+             white-space: nowrap;
+             vertical-align: middle;
          }
 
          .wind {
@@ -264,48 +265,54 @@
                     </thead>
                     <tbody>
                         {% for a in g.airports %}
+                        {% for line in a.lines %}
                         <tr>
-                            <td class="icao">{{ a.icao }}</td>
-                            <td class="runways">{{ a.runway_text }}</td>
+                            {% if loop.first %}
+                            <td class="icao" rowspan="{{ a.line_count }}">{{ a.icao }}</td>
+                            {% endif %}
+                            <td class="runways">{{ line.runway_text }}</td>
                             <td class="wind wind-sym wind-head-arrow">
-                                {% if a.wind_head_arrow_text == "↑" %}
+                                {% if line.wind_head_arrow_text == "↑" %}
                                 <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-up"></use></svg>
-                                {% elif a.wind_head_arrow_text == "↓" %}
+                                {% elif line.wind_head_arrow_text == "↓" %}
                                 <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-down"></use></svg>
-                                {% elif a.wind_head_arrow_text == "○" %}
+                                {% elif line.wind_head_arrow_text == "○" %}
                                 <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
                                 {% else %}
-                                {{ a.wind_head_arrow_text }}
+                                {{ line.wind_head_arrow_text }}
                                 {% endif %}
                             </td>
-                            <td class="wind wind-val wind-head-value">{{ a.wind_head_value_text }}</td>
+                            <td class="wind wind-val wind-head-value">{{ line.wind_head_value_text }}</td>
                             <td class="wind wind-sym wind-cross-left">
-                                {% if a.wind_cross_left_arrow_text == "→" %}
+                                {% if line.wind_cross_left_arrow_text == "→" %}
                                 <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-right"></use></svg>
-                                {% elif a.wind_cross_left_arrow_text == "○" %}
+                                {% elif line.wind_cross_left_arrow_text == "○" %}
                                 <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
                                 {% else %}
-                                {{ a.wind_cross_left_arrow_text }}
+                                {{ line.wind_cross_left_arrow_text }}
                                 {% endif %}
                             </td>
                             <td class="wind wind-val wind-cross-value">
-                                {% if a.wind_cross_value_text == "○" %}
+                                {% if line.wind_cross_value_text == "○" %}
                                 <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
                                 {% else %}
-                                {{ a.wind_cross_value_text }}
+                                {{ line.wind_cross_value_text }}
                                 {% endif %}
                             </td>
                             <td class="wind wind-sym wind-cross-right">
-                                {% if a.wind_cross_right_arrow_text == "←" %}
+                                {% if line.wind_cross_right_arrow_text == "←" %}
                                 <svg class="wind-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-left"></use></svg>
-                                {% elif a.wind_cross_right_arrow_text == "○" %}
+                                {% elif line.wind_cross_right_arrow_text == "○" %}
                                 <svg class="wind-icon calm" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><use href="#wind-icon-calm"></use></svg>
                                 {% else %}
-                                {{ a.wind_cross_right_arrow_text }}
+                                {{ line.wind_cross_right_arrow_text }}
                                 {% endif %}
                             </td>
-                            <td class="metar">{{ a.metar }}</td>
+                            {% if loop.first %}
+                            <td class="metar" rowspan="{{ a.line_count }}">{{ a.metar }}</td>
+                            {% endif %}
                         </tr>
+                        {% endfor %}
                         {% endfor %}
                     </tbody>
                 </table>
