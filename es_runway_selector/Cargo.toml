@@ -8,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-askama = { version = "0.15.4", default-features = false, features = ["derive", "std"] }
-clap = { version = "4.6.0", features = ["derive"] }
-config = { version = "0.15.21", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
+askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
+clap = { version = "4.6.1", features = ["derive"] }
+config = { version = "0.15.22", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
 directories = "6.0.0"
 encoding = "0.2.33"
 futures = { workspace = true }
@@ -19,32 +19,28 @@ itertools = { workspace = true }
 jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
 nom = { workspace = true }
-open = "5.3.3"
+open = "5.3.5"
 regex = "1.12.3"
 reqwest = { workspace = true }
-self_update = { version = "0.42.0", features = ["compression-zip-deflate", "rustls", "archive-tar"], default-features = false }
+self_update = { version = "0.44.0", features = ["reqwest", "compression-zip-deflate", "archive-tar"], default-features = false }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_with = { workspace = true }
+sysinfo = { version = "0.39.1", default-features = false, features = ["system", "serde"]}
 tempfile = "3.27.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { version = "1.0.6", features = ["preserve_order"] }
+toml = { version = "1.1.2", features = ["preserve_order"] }
 tracing = { workspace = true }
-tracing-appender = "0.2.4"
+tracing-appender = "0.2.5"
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
 vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }
 walkdir = "2.5.0"
-whoami = { version = "2.1.1", default-features = false, features = ["std"] }
+whoami = { version = "2.1.2", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 rfd = "0.17.2"
-
-[target.'cfg(windows)'.dependencies]
-sysinfo = { version = "0.38.4", default-features = false, features = ["system", "windows", "serde"] }
-
-[target.'cfg(not(windows))'.dependencies]
-sysinfo = { version = "0.38.4", default-features = false, features = ["system", "serde"]}
 
 [dev-dependencies]
 tracing-test = { workspace = true }

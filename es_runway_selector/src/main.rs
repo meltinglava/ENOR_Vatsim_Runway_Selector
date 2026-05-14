@@ -204,6 +204,9 @@ fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
 }
 
 fn main() -> ApplicationResult<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install ring crypto provider");
     let cli = Cli::parse();
     let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
