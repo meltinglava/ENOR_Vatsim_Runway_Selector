@@ -9,12 +9,15 @@ use std::{
     ops::{Index, IndexMut},
 };
 
+use runway_plugin_api::RunwayUse as PluginRunwayUse;
+
 use crate::{
     airport::{Airport, CrosswindDirection, RunwayInUseSource, RunwayWindComponents},
     atis_parser::find_runway_in_use_from_atis,
     config::ESConfig,
     error::ApplicationResult,
     metar::get_metars,
+    plugin_client::{PluginProcess, build_request},
     runway::{RunwayDirection, RunwayUse},
     sector_file::load_airports_from_sct_runway_section,
 };
@@ -126,17 +129,69 @@ impl Airports {
         Ok(())
     }
 
-    pub fn select_runway_in_use(&mut self, config: &ESConfig) {
-        self.runway_in_use_based_on_metar(config);
+    pub async fn select_runway_in_use(&mut self, config: &ESConfig) {
+        self.apply_plugin_selections(config).await;
+        self.runway_in_use_based_on_metar();
         self.apply_default_runways(config);
     }
 
-    fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
+    async fn apply_plugin_selections(&mut self, config: &ESConfig) {
+        let Some(binary) = config.get_plugin_binary() else {
+            return;
+        };
+
+        let plugin = match PluginProcess::spawn(binary).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to spawn plugin: {}", e);
+                return;
+            }
+        };
+
+        let request = build_request(self.airports.values());
+
+        let response = match plugin.query(&request).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Plugin query failed: {}", e);
+                return;
+            }
+        };
+
+        for result in response.results {
+            if !result.handled || result.runway_uses.is_empty() {
+                continue;
+            }
+            if let Some(airport) = self.airports.get_mut(&result.icao) {
+                let runway_uses = result
+                    .runway_uses
+                    .into_iter()
+                    .map(|entry| {
+                        let use_ = match entry.use_ {
+                            PluginRunwayUse::Departing => RunwayUse::Departing,
+                            PluginRunwayUse::Arriving => RunwayUse::Arriving,
+                            PluginRunwayUse::Both => RunwayUse::Both,
+                        };
+                        (entry.runway, use_)
+                    })
+                    .collect();
+                airport
+                    .runways_in_use
+                    .insert(RunwayInUseSource::Metar, runway_uses);
+            }
+        }
+    }
+
+    fn runway_in_use_based_on_metar(&mut self) {
         for airport in self.airports.values_mut() {
-            if airport.icao == "ENGM" {
-                let (source, runway_in_use) = airport.set_runway_for_engm(config).unwrap_or_log();
-                airport.runways_in_use.insert(source, runway_in_use);
-            } else if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind()
+            // Skip airports already handled by the plugin.
+            if airport
+                .runways_in_use
+                .contains_key(&RunwayInUseSource::Metar)
+            {
+                continue;
+            }
+            if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind()
                 && !runways_in_use.is_empty()
             {
                 airport
@@ -683,12 +738,12 @@ pub(crate) mod tests {
         }
     }
 
-    fn setup_test_airport_from_metar(metar: &str) -> Airport {
+    async fn setup_test_airport_from_metar(metar: &str) -> Airport {
         let ap = make_test_airport(metar);
         let mut aps = Airports::new();
         aps.add_airport(ap);
         let config = ESConfig::new_for_test();
-        aps.select_runway_in_use(&config);
+        aps.select_runway_in_use(&config).await;
         aps.airports.pop().unwrap().1
     }
 
@@ -707,27 +762,10 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_engm_variable_to_segregated_name() {
-        let metar = "ENGM 080920Z VRB03KT 9999 -SHSN OVC009 M09/M12 Q1024 NOSIG";
-        let gm = setup_test_airport_from_metar(metar);
-        assert_eq!(
-            gm.runways_in_use,
-            IndexMap::from([(
-                RunwayInUseSource::Default,
-                [
-                    ("01L".to_string(), RunwayUse::Departing),
-                    ("01R".to_string(), RunwayUse::Arriving)
-                ]
-                .into()
-            )])
-        )
-    }
-
-    #[test]
-    fn test_metar_enmh() {
+    #[tokio::test]
+    async fn test_metar_enmh() {
         let metar = "ENMH 220550Z AUTO 30009KT 250V330 9999 BKN028/// OVC049/// 07/02 Q1016";
-        let airport = setup_test_airport_from_metar(metar);
+        let airport = setup_test_airport_from_metar(metar).await;
         assert_eq!(
             airport.runways_in_use,
             IndexMap::from([(

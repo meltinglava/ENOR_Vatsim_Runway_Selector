@@ -3,17 +3,14 @@ use itertools::{
     Itertools,
     MinMaxResult::{MinMax, NoElements, OneElement},
 };
-use jiff::Zoned;
 use metar_decoder::{
     metar::Metar,
-    obscuration::{Cloud, CloudCoverage, Obscuration, VisibilityUnit},
     optional_data::OptionalData,
     units::{track::Track, velocity::WindVelocity},
     wind::Wind,
 };
 
 use crate::{
-    config::ESConfig,
     error::{ApplicationError, ApplicationResult},
     runway::{Runway, RunwayDirection, RunwayUse},
     util::diff_angle,
@@ -59,13 +56,6 @@ pub enum CrosswindDirection {
     Variable,
 }
 
-#[derive(Debug)]
-enum EngmModes {
-    Mixed,
-    Segregated,
-    Single,
-}
-
 impl Airport {
     #[allow(dead_code)] // planned for runway report output
     pub fn runway_wind_components(
@@ -102,18 +92,12 @@ impl Airport {
     }
 
     pub fn set_runway_based_on_metar_wind(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
-        if self.icao == "ENGM" {
-            unreachable!("ENGM should be dealt with before reaching this step")
-        } else if self.icao == "ENZV" {
-            self.set_runway_for_enzv()
-        } else if self.runways.len() == 1 {
+        if self.runways.len() == 1 {
             self.internal_set_runway_based_on_metar_wind(0)
                 .ok_or(ApplicationError::NoRunwayToSet)
         } else {
-            unreachable!(
-                "Airport {} has multiple runways, but no specific logic implemented for it",
-                self.icao
-            );
+            // Multi-runway airports require a plugin for area-specific selection logic.
+            Ok(IndexMap::new())
         }
     }
 
@@ -156,193 +140,6 @@ impl Airport {
         }
 
         None
-    }
-
-    pub(crate) fn set_runway_for_engm(
-        &self,
-        config: &ESConfig,
-    ) -> ApplicationResult<(RunwayInUseSource, IndexMap<String, RunwayUse>)> {
-        let source;
-        let runway_direction: String = match self.internal_set_runway_based_on_metar_wind(0) {
-            Some(map) => {
-                source = RunwayInUseSource::Metar;
-                map.keys().next().unwrap()[..2].to_string()
-            }
-            None => {
-                source = RunwayInUseSource::Default;
-                config
-                    .get_default_runways()
-                    .get(&self.icao)
-                    .map(|&rwy| format!("{:02}", rwy))
-                    .unwrap_or_else(|| "01".to_string()) // Default to 01 if no default is set
-            }
-        };
-
-        let mut ceiling_for_lvp = false;
-        let mut rvr_reported = false;
-        let mut visibility_below_5000 = false;
-        let mut reported_vv = false;
-        let mut possible_deice_conditions = false;
-        let mut forced_deice_condition = false;
-
-        if let Some(metar) = &self.metar
-            && let Obscuration::Described(described_obscuration) = &metar.obscuration
-        {
-            let ceiling_clouds = [CloudCoverage::Broken, CloudCoverage::Overcast];
-            ceiling_for_lvp = described_obscuration
-                .clouds
-                .iter()
-                .filter_map(|cloud| match cloud {
-                    Cloud::CloudData(cloud_data) => Some(cloud_data),
-                    Cloud::NCD | Cloud::NSC | Cloud::CLR => None,
-                })
-                .filter(|cloud| {
-                    if let OptionalData::Data(coverage) = &cloud.coverage {
-                        ceiling_clouds.contains(coverage)
-                    } else {
-                        true // If coverage is undefined, we assume its broken or overcast
-                    }
-                })
-                .any(|cloud| {
-                    if let OptionalData::Data(height) = &cloud.height {
-                        height.height < 15 // Ceiling below 1500 feet
-                    } else {
-                        true // If height is undefined, we assume its below 1500 feet
-                    }
-                });
-
-            rvr_reported = !described_obscuration.rvr.is_empty();
-
-            if let VisibilityUnit::Meters(data) = described_obscuration.visibility.value {
-                visibility_below_5000 = if let OptionalData::Data(value) = data {
-                    value < 5000
-                } else {
-                    true
-                }
-            }
-
-            reported_vv = described_obscuration.vertical_visibility.is_some();
-
-            forced_deice_condition = described_obscuration
-                .present_weather
-                .iter()
-                .cloned()
-                .flat_map(|pw| pw.descriptor)
-                .any(|descriptor| descriptor == metar_decoder::obscuration::Qualifier::Freezing);
-
-            let contender_for_deice = described_obscuration
-                .present_weather
-                .iter()
-                .cloned()
-                .flat_map(|pw| pw.phenomena)
-                .any(|phenomenon| {
-                    use metar_decoder::obscuration::WeatherPhenomenon::*;
-                    phenomenon.to_option().is_some_and(|p| match p {
-                        DZ | RA | SN | SG | PL | GR | GS | UP | BR | FG => true,
-                        FU | VA | DU | SA | HZ | PO | SQ | FC | SS | DS => false,
-                    })
-                });
-
-            possible_deice_conditions = match metar.temperature.temp {
-                OptionalData::Undefined => contender_for_deice,
-                OptionalData::Data(temp) => temp < 5 && contender_for_deice,
-            }
-        }
-
-        let now = Zoned::now()
-            .in_tz("Europe/Oslo")
-            .expect("Failed to get timezone Europe/Oslo");
-        let mode = if now.date().at(22, 30, 0, 0).in_tz("Europe/Oslo")? <= now {
-            EngmModes::Segregated
-        } else if now.date().at(6, 30, 0, 0).in_tz("Europe/Oslo")? > now {
-            EngmModes::Single // could be segregated / mixed if weather is bad, but currently out of scope
-        } else if ceiling_for_lvp
-            || rvr_reported
-            || visibility_below_5000
-            || reported_vv
-            || possible_deice_conditions
-            || forced_deice_condition
-        {
-            EngmModes::Segregated
-        } else {
-            EngmModes::Mixed
-        };
-
-        let mut map = IndexMap::new();
-        match mode {
-            EngmModes::Mixed => {
-                map.insert(format!("{}L", runway_direction), RunwayUse::Both);
-                map.insert(format!("{}R", runway_direction), RunwayUse::Both);
-            }
-            EngmModes::Segregated => {
-                map.insert(format!("{}L", runway_direction), RunwayUse::Departing);
-                map.insert(format!("{}R", runway_direction), RunwayUse::Arriving);
-            }
-            EngmModes::Single => {
-                let runway = match runway_direction.as_str() {
-                    "01" => "01L",
-                    "19" => "19R",
-                    _ => unreachable!(
-                        "Runway direction {} is not valid for ENGM",
-                        runway_direction
-                    ),
-                }
-                .to_string();
-                map.insert(runway, RunwayUse::Both);
-            }
-        }
-        Ok((source, map))
-    }
-
-    fn set_runway_for_enzv(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
-        let main_runway_index = self
-            .runways
-            .iter()
-            .enumerate()
-            .filter(|(_, runway)| runway.runways.iter().any(|dir| dir.identifier == "18"))
-            .map(|(i, _)| i)
-            .next()
-            .unwrap();
-        let main_runway = match self.internal_set_runway_based_on_metar_wind(main_runway_index) {
-            Some(rwy) => rwy.keys().next().unwrap().to_string(),
-            None => "18".to_string(),
-        };
-
-        let default_fallback = Ok(IndexMap::from([(main_runway.clone(), RunwayUse::Both)]));
-
-        let main_runway_direction = self.runways[main_runway_index]
-            .runways
-            .iter()
-            .find(|dir| dir.identifier == main_runway)
-            .unwrap();
-
-        let Some((crosswind, _crosswind_direction)) =
-            self.runway_max_crosswind(main_runway_direction)
-        else {
-            return default_fallback;
-        };
-        if crosswind < 15 {
-            // If crosswind is below 15 knots, we can use the main runway
-            return default_fallback;
-        }
-        let secondary_runway_index = main_runway_index & 1;
-        let secondary_runway_crosswind = self
-            .runway_max_crosswind(&self.runways[secondary_runway_index].runways[0])
-            .map(|(crosswind, _crosswind_direction)| crosswind)
-            .unwrap();
-        let secondary_runway =
-            match self.internal_set_runway_based_on_metar_wind(secondary_runway_index) {
-                Some(rwy) => rwy.keys().next().unwrap().to_string(),
-                None => return default_fallback,
-            };
-        if secondary_runway_crosswind < crosswind {
-            // If the secondary runway has a lower crosswind, we use it
-            let mut map = IndexMap::new();
-            map.insert(secondary_runway, RunwayUse::Both);
-            Ok(map)
-        } else {
-            default_fallback
-        }
     }
 
     fn calculate_max_crosswind_from_wind(

@@ -3,7 +3,10 @@ pub(crate) mod airports;
 pub(crate) mod atis_parser;
 pub(crate) mod config;
 pub(crate) mod error;
+pub(crate) mod helpers_server;
 pub(crate) mod metar;
+pub(crate) mod mise_manager;
+pub(crate) mod plugin_client;
 pub(crate) mod runway;
 pub(crate) mod sector_file;
 pub(crate) mod util;
@@ -94,7 +97,7 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     airports.load_airports_from_sector_file(&mut sct_file, &config)?;
     airports.add_metars(&config).await;
     airports.read_atis_and_apply_runways().await.unwrap();
-    airports.select_runway_in_use(&config);
+    airports.select_runway_in_use(&config).await;
     airports.sort();
     config
         .write_runways_to_euroscope_rwy_file(&airports)

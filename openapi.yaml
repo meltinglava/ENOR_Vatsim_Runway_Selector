@@ -1,0 +1,599 @@
+openapi: "3.0.3"
+info:
+  title: Runway Selector Plugin API
+  version: "1.0.0"
+  description: |
+    HTTP API that a runway-selector plugin binary must implement.
+
+    The `es_runway_selector` tool spawns the plugin binary with `--port <N>`,
+    polls `GET /health` until the server is ready, then sends a single
+    `POST /runway-selections` request containing all airports loaded from the
+    sector file.  The tool terminates the process when it is done.
+
+    **Implementing a plugin**
+
+    1. Write an HTTP server that listens on `127.0.0.1:<port>` where `<port>`
+       comes from the `--port` CLI argument.
+    2. Expose `GET /health` — return `200 OK` as soon as the server is ready.
+    3. Expose `POST /runway-selections` — for each airport in the request,
+       return either:
+       - `handled: true` with a list of `runway_uses` (the plugin owns the
+         selection for that airport), or
+       - `handled: false` (the caller falls back to its generic wind-based
+         logic).
+    4. Configure the plugin in `config.toml`:
+       ```toml
+       plugin_binary = "/path/to/my_plugin"
+       ```
+
+    The request includes **pre-computed wind components** (headwind, tailwind,
+    crosswind, crosswind direction) for every runway direction so plugins do not
+    need to implement trigonometry.  Raw and parsed METAR data are also provided.
+
+    ## Helpers server
+
+    In addition to `--port`, the plugin binary receives `--helpers-port <M>`.
+    The tool runs an HTTP server on that port exposing ready-made selection
+    helpers.  Any plugin, in any language, can call these endpoints instead of
+    implementing the wind maths itself.
+
+    | Endpoint | What it does |
+    |----------|--------------|
+    | `POST /helpers/best-headwind` | Runway with the greatest headwind (must beat runner-up by `advantage_threshold_kt`). |
+    | `POST /helpers/prefer-unless-tailwind` | Use `preferred_id` unless its tailwind > `max_tailwind_kt`, then switch to best headwind. |
+    | `POST /helpers/prefer-unless-crosswind` | Use `preferred_id` unless its crosswind > `max_crosswind_kt`, then switch to minimum crosswind. |
+    | `POST /helpers/min-crosswind` | Runway with the smallest crosswind. |
+    | `POST /helpers/within-crosswind-limit` | All runways whose crosswind ≤ `max_kt`. |
+
+    All endpoints accept a JSON body containing the `runways` array from the
+    main request (plus the relevant threshold parameter) and return either
+    `{ "runway": "18" }` (or `null`) for single-runway results, or
+    `{ "runways": ["18", "36"] }` for multi-runway results.
+    See the **Helpers server API** section below for full schemas.
+
+    ## Scripted plugins via mise
+
+    Set `plugin_binary` to a script file — the tool detects the extension and
+    uses **mise** to install the runtime and run the script automatically.
+    mise is downloaded and cached in the app data directory if it is not
+    already in `PATH`; the user needs no runtime pre-installed.
+
+    | Extension | Runtime invoked |
+    |-----------|----------------|
+    | `.py` | `mise exec --yes python@latest -- python` |
+    | `.js` / `.mjs` | `mise exec --yes node@latest -- node` |
+    | `.ts` / `.mts` | `mise exec --yes deno@latest -- deno run --allow-net --allow-read` |
+    | `.rb` | `mise exec --yes ruby@latest -- ruby` |
+    | *(anything else)* | executed directly as a native binary |
+
+    Example config:
+    ```toml
+    plugin_binary = "/path/to/my_plugin.py"
+    ```
+
+    Reference examples for Python and Node.js are in the `examples/` directory
+    of the repository.  Both use only their language's standard library — no
+    package manager or additional dependencies are required.
+
+    ## Rust helper functions (native)
+
+    When writing a plugin in Rust, use `runway_plugin_api::helpers` directly
+    instead of calling the helpers server — the functions are the same logic
+    compiled natively into your binary.
+
+paths:
+  # ── Plugin endpoints (implemented by the plugin binary) ──────────────────
+  /health:
+    get:
+      summary: Health check
+      description: |
+        The caller polls this endpoint after spawning the plugin process.
+        Return `200 OK` as soon as the server is ready to accept requests.
+      responses:
+        "200":
+          description: Plugin is ready
+
+  /runway-selections:
+    post:
+      summary: Select runways for a batch of airports
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunwaySelectionsRequest"
+            example:
+              airports:
+                - icao: "ENGM"
+                  timestamp_utc: "2026-05-14T10:20:00Z"
+                  runways:
+                    - identifier: "01L"
+                      heading: 6
+                      headwind_kt: 8
+                      tailwind_kt: 0
+                      crosswind_kt: 3
+                      crosswind_direction: "Right"
+                    - identifier: "19R"
+                      heading: 186
+                      headwind_kt: -8
+                      tailwind_kt: 8
+                      crosswind_kt: 3
+                      crosswind_direction: "Left"
+                  metar:
+                    raw: "ENGM 141020Z 35010KT 9999 FEW040 06/01 Q1015 NOSIG"
+                    parsed:
+                      is_cavok: false
+                      wind:
+                        direction_degrees: 350
+                        is_variable: false
+                        speed_kt: 10
+                      visibility_meters: 9999
+                      clouds:
+                        - coverage: "Few"
+                          height_hundreds_ft: 40
+                      temperature_c: 6
+                      dew_point_c: 1
+                      qnh_hpa: 1015
+      responses:
+        "200":
+          description: Runway selections (one result per airport)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunwaySelectionsResponse"
+              example:
+                results:
+                  - icao: "ENGM"
+                    handled: true
+                    runway_uses:
+                      - runway: "01L"
+                        use: "Both"
+                      - runway: "01R"
+                        use: "Both"
+                  - icao: "ENVA"
+                    handled: false
+
+components:
+  schemas:
+    RunwaySelectionsRequest:
+      type: object
+      required: [airports]
+      properties:
+        airports:
+          type: array
+          items:
+            $ref: "#/components/schemas/AirportSelectionRequest"
+
+    AirportSelectionRequest:
+      type: object
+      required: [icao, runways, timestamp_utc]
+      properties:
+        icao:
+          type: string
+          description: ICAO airport identifier
+          example: "ENGM"
+        runways:
+          type: array
+          description: |
+            All runway directions at this airport.
+            Each direction has pre-computed wind components from the current METAR.
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+        metar:
+          $ref: "#/components/schemas/MetarData"
+        timestamp_utc:
+          type: string
+          format: date-time
+          description: Current UTC time in RFC 3339 format
+          example: "2026-05-14T10:20:00Z"
+
+    RunwayInfo:
+      type: object
+      required: [identifier, heading]
+      properties:
+        identifier:
+          type: string
+          description: Runway identifier
+          example: "01L"
+        heading:
+          type: integer
+          description: Runway heading in degrees true (0–359)
+          minimum: 0
+          maximum: 359
+        headwind_kt:
+          type: integer
+          nullable: true
+          description: |
+            Max headwind component in knots.
+            Positive = headwind, negative = tailwind.
+            Null when no METAR is available.
+        tailwind_kt:
+          type: integer
+          nullable: true
+          description: Max tailwind component in knots (always ≥ 0). Null when no METAR.
+          minimum: 0
+        crosswind_kt:
+          type: integer
+          nullable: true
+          description: Max crosswind magnitude in knots (always ≥ 0). Null when no METAR.
+          minimum: 0
+        crosswind_direction:
+          $ref: "#/components/schemas/CrosswindDirection"
+
+    CrosswindDirection:
+      type: string
+      enum: [Left, Right, Variable]
+      description: Direction the crosswind comes from relative to the runway centerline
+
+    MetarData:
+      type: object
+      required: [raw]
+      properties:
+        raw:
+          type: string
+          description: Raw METAR string as received
+          example: "ENGM 141020Z 35010KT 9999 FEW040 06/01 Q1015 NOSIG"
+        parsed:
+          $ref: "#/components/schemas/ParsedMetar"
+
+    ParsedMetar:
+      type: object
+      required: [is_cavok]
+      properties:
+        is_cavok:
+          type: boolean
+          description: True when METAR reports CAVOK
+        wind:
+          $ref: "#/components/schemas/WindData"
+        visibility_meters:
+          type: integer
+          nullable: true
+          description: Prevailing visibility in metres. Null if CAVOK or not reported.
+          minimum: 0
+        rvr:
+          type: array
+          items:
+            $ref: "#/components/schemas/RvrData"
+          default: []
+        clouds:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudData"
+          default: []
+        vertical_visibility_hundreds_ft:
+          type: integer
+          nullable: true
+          description: |
+            Vertical visibility in hundreds of feet.
+            Null if VV not reported; 0 if reported but unreadable (VV///).
+        weather_phenomena:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeatherPhenomenonData"
+          default: []
+        temperature_c:
+          type: integer
+          nullable: true
+          description: Temperature in °C. Null if not reported or unreadable.
+        dew_point_c:
+          type: integer
+          nullable: true
+          description: Dew point in °C. Null if not reported or unreadable.
+        qnh_hpa:
+          type: integer
+          nullable: true
+          description: QNH in hPa. Null if not reported or unreadable.
+          minimum: 0
+
+    WindData:
+      type: object
+      required: [is_variable, speed_kt]
+      properties:
+        direction_degrees:
+          type: integer
+          nullable: true
+          description: Wind direction in degrees true (0–359). Null if variable or unreadable.
+          minimum: 0
+          maximum: 359
+        is_variable:
+          type: boolean
+          description: True when direction is explicitly reported as variable (VRB)
+        speed_kt:
+          type: integer
+          description: Wind speed in knots
+          minimum: 0
+        gust_kt:
+          type: integer
+          nullable: true
+          description: Gust speed in knots, if reported
+          minimum: 0
+        variable_from_degrees:
+          type: integer
+          nullable: true
+          description: Start of variable wind range, e.g. 250 in "250V310"
+          minimum: 0
+          maximum: 359
+        variable_to_degrees:
+          type: integer
+          nullable: true
+          description: End of variable wind range, e.g. 310 in "250V310"
+          minimum: 0
+          maximum: 359
+
+    RvrData:
+      type: object
+      required: [runway]
+      properties:
+        runway:
+          type: string
+          description: Runway designator
+          example: "28L"
+        meters:
+          type: integer
+          nullable: true
+          description: RVR value in metres. Null if unreadable (/////)
+          minimum: 0
+
+    CloudData:
+      type: object
+      properties:
+        coverage:
+          $ref: "#/components/schemas/CloudCoverage"
+        height_hundreds_ft:
+          type: integer
+          nullable: true
+          description: Cloud base in hundreds of feet. Null if unreadable (///).
+        cloud_type:
+          type: string
+          nullable: true
+          description: Cloud type, e.g. "CB", "TCU". Null if not reported or unreadable.
+
+    CloudCoverage:
+      type: string
+      enum: [Few, Scattered, Broken, Overcast]
+
+    WeatherPhenomenonData:
+      type: object
+      required: [phenomena]
+      properties:
+        intensity:
+          $ref: "#/components/schemas/WeatherIntensity"
+        descriptors:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeatherDescriptor"
+          default: []
+        phenomena:
+          type: array
+          description: METAR weather codes such as "DZ", "RA", "SN", "FG", etc.
+          items:
+            type: string
+          example: ["SN"]
+
+    WeatherIntensity:
+      type: string
+      enum: [Light, Heavy, Vicinity]
+      nullable: true
+
+    WeatherDescriptor:
+      type: string
+      enum: [Shallow, Partial, Patches, LowDrifting, Blowing, Shower, Thunderstorm, Freezing]
+
+    RunwaySelectionsResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AirportSelectionResult"
+
+    AirportSelectionResult:
+      type: object
+      required: [icao, handled]
+      properties:
+        icao:
+          type: string
+          description: ICAO airport identifier (mirrors the request)
+        handled:
+          type: boolean
+          description: |
+            True if the plugin is providing a selection for this airport.
+            False tells the caller to use its own fallback logic (generic
+            wind-based selection or default runway from config).
+        runway_uses:
+          type: array
+          description: Non-empty only when `handled` is true.
+          items:
+            $ref: "#/components/schemas/RunwayUseEntry"
+          default: []
+
+    RunwayUseEntry:
+      type: object
+      required: [runway, use]
+      properties:
+        runway:
+          type: string
+          description: Runway identifier
+          example: "01L"
+        use:
+          $ref: "#/components/schemas/RunwayUse"
+
+    RunwayUse:
+      type: string
+      enum: [Departing, Arriving, Both]
+
+    # ── Helpers server schemas ─────────────────────────────────────────────
+    BestHeadwindRequest:
+      type: object
+      required: [runways, advantage_threshold_kt]
+      properties:
+        runways:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+        advantage_threshold_kt:
+          type: integer
+          description: |
+            The leader must beat the runner-up by strictly more than this value.
+            Use 0 to always pick the leader.
+          example: 2
+
+    PreferUnlessTailwindRequest:
+      type: object
+      required: [runways, preferred_id, max_tailwind_kt]
+      properties:
+        runways:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+        preferred_id:
+          type: string
+          example: "18"
+        max_tailwind_kt:
+          type: integer
+          description: Switch away from preferred when its tailwind exceeds this
+          example: 5
+
+    PreferUnlessCrosswindRequest:
+      type: object
+      required: [runways, preferred_id, max_crosswind_kt]
+      properties:
+        runways:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+        preferred_id:
+          type: string
+          example: "18"
+        max_crosswind_kt:
+          type: integer
+          description: Switch away from preferred when its crosswind exceeds this
+          example: 15
+
+    RunwaysOnlyRequest:
+      type: object
+      required: [runways]
+      properties:
+        runways:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+
+    WithinCrosswindLimitRequest:
+      type: object
+      required: [runways, max_kt]
+      properties:
+        runways:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunwayInfo"
+        max_kt:
+          type: integer
+          example: 15
+
+    HelperRunwayResult:
+      type: object
+      required: [runway]
+      properties:
+        runway:
+          type: string
+          nullable: true
+          description: Identifier of the selected runway, or null when no runway qualifies
+          example: "18"
+
+    HelperRunwaysResult:
+      type: object
+      required: [runways]
+      properties:
+        runways:
+          type: array
+          items:
+            type: string
+          description: Identifiers of all qualifying runways
+          example: ["18", "36"]
+
+x-helpers-server:
+  description: |
+    Endpoints served by es_runway_selector on the port passed as --helpers-port.
+    These are NOT implemented by the plugin; they are called BY the plugin.
+  paths:
+    /helpers/best-headwind:
+      post:
+        summary: Runway with the greatest headwind
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BestHeadwindRequest"
+        responses:
+          "200":
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/HelperRunwayResult"
+
+    /helpers/prefer-unless-tailwind:
+      post:
+        summary: Preferred runway unless tailwind exceeds limit
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferUnlessTailwindRequest"
+        responses:
+          "200":
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/HelperRunwayResult"
+
+    /helpers/prefer-unless-crosswind:
+      post:
+        summary: Preferred runway unless crosswind exceeds limit
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferUnlessCrosswindRequest"
+        responses:
+          "200":
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/HelperRunwayResult"
+
+    /helpers/min-crosswind:
+      post:
+        summary: Runway with the smallest crosswind
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunwaysOnlyRequest"
+        responses:
+          "200":
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/HelperRunwayResult"
+
+    /helpers/within-crosswind-limit:
+      post:
+        summary: All runways whose crosswind is within the limit
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithinCrosswindLimitRequest"
+        responses:
+          "200":
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/HelperRunwaysResult"

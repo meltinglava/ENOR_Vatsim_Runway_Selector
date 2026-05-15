@@ -52,6 +52,9 @@ struct Configurable {
     euroscope_config_folder: Option<PathBuf>,
     euroscope_executable_path: Option<IndexMap<String, PathBuf>>,
     es_main_window_delay_ms: Option<u64>,
+    /// Path to a runway-selector plugin binary.
+    /// The binary must accept `--port <N>` and implement the runway plugin HTTP API.
+    plugin_binary: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -92,6 +95,10 @@ impl ESConfig {
 
     pub fn get_default_runways(&self) -> &IndexMap<String, u8> {
         &self.config.default_runways
+    }
+
+    pub fn get_plugin_binary(&self) -> Option<&std::path::Path> {
+        self.config.plugin_binary.as_deref()
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {

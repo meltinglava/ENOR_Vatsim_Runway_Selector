@@ -1,0 +1,9 @@
+[package]
+name = "runway_plugin_api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }

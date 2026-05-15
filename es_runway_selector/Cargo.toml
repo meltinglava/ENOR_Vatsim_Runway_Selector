@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
+axum = { workspace = true }
 clap = { version = "4.6.1", features = ["derive"] }
 config = { version = "0.15.22", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
 directories = "6.0.0"
@@ -18,6 +19,7 @@ indexmap = { workspace = true }
 itertools = { workspace = true }
 jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
+runway_plugin_api = { path = "../runway_plugin_api" }
 nom = { workspace = true }
 open = "5.3.5"
 regex = "1.12.3"
@@ -41,6 +43,13 @@ whoami = { version = "2.1.2", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
 rfd = "0.17.2"
+
+[target.'cfg(windows)'.dependencies]
+zip = "2.2"
+
+[target.'cfg(not(windows))'.dependencies]
+flate2 = "1.1"
+tar = "0.4"
 
 [dev-dependencies]
 tracing-test = { workspace = true }

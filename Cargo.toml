@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job"]
+members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job", "runway_plugin_api", "enor_plugin"]
 
 [workspace.package]
 authors = ["meltinglava"]
@@ -27,3 +27,4 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "ansi", "json", "env-filter", "std"] }
 tracing-test = "0.2.6"
 tracing-unwrap = { version = "1.0.1", features = ["log-location"] }
+axum = { version = "0.8.4", default-features = false, features = ["json", "tokio", "http1"] }
