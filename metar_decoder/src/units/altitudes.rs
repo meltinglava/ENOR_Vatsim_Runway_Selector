@@ -10,6 +10,7 @@ use nom::{
 use crate::optional_data::OptionalData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CloudHeight {
     pub height: i32,
 }

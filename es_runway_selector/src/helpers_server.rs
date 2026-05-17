@@ -1,12 +1,13 @@
 use axum::{Json, Router, routing::post};
 use runway_plugin_api::{
-    RunwayInfo,
+    BestHeadwindRequest, MinCrosswindRequest, PreferUnlessCrosswindRequest,
+    PreferUnlessTailwindRequest, RunwayInfo, RunwayResult, RunwaysResult,
+    WithinCrosswindLimitRequest,
     helpers::{
         best_headwind, min_crosswind, prefer_unless_crosswind, prefer_unless_tailwind,
         within_crosswind_limit,
     },
 };
-use serde::{Deserialize, Serialize};
 
 pub struct HelpersServer {
     pub port: u16,
@@ -51,53 +52,17 @@ impl Drop for HelpersServer {
     }
 }
 
-// ── Request / response types ──────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct BestHeadwindRequest {
-    runways: Vec<RunwayInfo>,
-    advantage_threshold_kt: i32,
-}
-
-#[derive(Deserialize)]
-struct PreferUnlessTailwindRequest {
-    runways: Vec<RunwayInfo>,
-    preferred_id: String,
-    max_tailwind_kt: i32,
-}
-
-#[derive(Deserialize)]
-struct PreferUnlessCrosswindRequest {
-    runways: Vec<RunwayInfo>,
-    preferred_id: String,
-    max_crosswind_kt: i32,
-}
-
-#[derive(Deserialize)]
-struct RunwaysOnlyRequest {
-    runways: Vec<RunwayInfo>,
-}
-
-#[derive(Deserialize)]
-struct WithinCrosswindLimitRequest {
-    runways: Vec<RunwayInfo>,
-    max_kt: i32,
-}
-
-/// Single-runway result — `null` when no runway qualifies.
-#[derive(Serialize)]
-struct RunwayResult {
-    runway: Option<String>,
-}
-
-/// Multi-runway result.
-#[derive(Serialize)]
-struct RunwaysResult {
-    runways: Vec<String>,
-}
-
-// ── Handlers ──────────────────────────────────────────────────────────────────
-
+/// Return the runway with the greatest headwind advantage.
+///
+/// The winner must beat the runner-up by strictly more than `advantage_threshold_kt`.
+/// Returns `null` when no runway has METAR wind data or no clear winner exists.
+#[utoipa::path(
+    post,
+    path = "/helpers/best-headwind",
+    tag = "Helpers API",
+    request_body = BestHeadwindRequest,
+    responses((status = 200, body = RunwayResult))
+)]
 async fn handle_best_headwind(Json(req): Json<BestHeadwindRequest>) -> Json<RunwayResult> {
     Json(RunwayResult {
         runway: best_headwind(&req.runways, req.advantage_threshold_kt)
@@ -105,6 +70,17 @@ async fn handle_best_headwind(Json(req): Json<BestHeadwindRequest>) -> Json<Runw
     })
 }
 
+/// Return `preferred_id` unless its tailwind exceeds `max_tailwind_kt`.
+///
+/// Falls back to `best_headwind` (threshold = 0) when the preferred runway is unsuitable.
+/// Returns `null` when no METAR wind data is available.
+#[utoipa::path(
+    post,
+    path = "/helpers/prefer-unless-tailwind",
+    tag = "Helpers API",
+    request_body = PreferUnlessTailwindRequest,
+    responses((status = 200, body = RunwayResult))
+)]
 async fn handle_prefer_unless_tailwind(
     Json(req): Json<PreferUnlessTailwindRequest>,
 ) -> Json<RunwayResult> {
@@ -114,6 +90,17 @@ async fn handle_prefer_unless_tailwind(
     })
 }
 
+/// Return `preferred_id` unless its crosswind exceeds `max_crosswind_kt`.
+///
+/// Falls back to `best_headwind` (threshold = 0) when the preferred runway is unsuitable.
+/// Returns `null` when no METAR wind data is available.
+#[utoipa::path(
+    post,
+    path = "/helpers/prefer-unless-crosswind",
+    tag = "Helpers API",
+    request_body = PreferUnlessCrosswindRequest,
+    responses((status = 200, body = RunwayResult))
+)]
 async fn handle_prefer_unless_crosswind(
     Json(req): Json<PreferUnlessCrosswindRequest>,
 ) -> Json<RunwayResult> {
@@ -123,12 +110,30 @@ async fn handle_prefer_unless_crosswind(
     })
 }
 
-async fn handle_min_crosswind(Json(req): Json<RunwaysOnlyRequest>) -> Json<RunwayResult> {
+/// Return the runway with the smallest crosswind component.
+///
+/// Returns `null` when no runway has METAR wind data.
+#[utoipa::path(
+    post,
+    path = "/helpers/min-crosswind",
+    tag = "Helpers API",
+    request_body = MinCrosswindRequest,
+    responses((status = 200, body = RunwayResult))
+)]
+async fn handle_min_crosswind(Json(req): Json<MinCrosswindRequest>) -> Json<RunwayResult> {
     Json(RunwayResult {
         runway: min_crosswind(&req.runways).map(|r| r.identifier.clone()),
     })
 }
 
+/// Return all runways whose crosswind is at or below `max_kt`.
+#[utoipa::path(
+    post,
+    path = "/helpers/within-crosswind-limit",
+    tag = "Helpers API",
+    request_body = WithinCrosswindLimitRequest,
+    responses((status = 200, body = RunwaysResult))
+)]
 async fn handle_within_crosswind_limit(
     Json(req): Json<WithinCrosswindLimitRequest>,
 ) -> Json<RunwaysResult> {
@@ -139,3 +144,37 @@ async fn handle_within_crosswind_limit(
             .collect(),
     })
 }
+
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    info(
+        title = "Helpers API",
+        description = "
+Endpoints hosted by `es_runway_selector` on the port passed as `--helpers-port`.
+Call these from your plugin to use built-in runway selection algorithms.
+",
+        version = "1"
+    ),
+    paths(
+        handle_best_headwind,
+        handle_prefer_unless_tailwind,
+        handle_prefer_unless_crosswind,
+        handle_min_crosswind,
+        handle_within_crosswind_limit,
+    ),
+    components(schemas(
+        BestHeadwindRequest,
+        PreferUnlessTailwindRequest,
+        PreferUnlessCrosswindRequest,
+        MinCrosswindRequest,
+        WithinCrosswindLimitRequest,
+        RunwayResult,
+        RunwaysResult,
+        RunwayInfo,
+        runway_plugin_api::CrosswindDirection,
+    )),
+    tags(
+        (name = "Helpers API", description = "Endpoints hosted by es_runway_selector for plugins to call"),
+    )
+)]
+pub struct HelpersApiDoc;

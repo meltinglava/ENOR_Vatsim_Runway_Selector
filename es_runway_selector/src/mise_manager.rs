@@ -11,7 +11,8 @@ use crate::{config::es_runway_selector_project_dir, plugin_client::PluginError};
 /// binaries that are executed directly without mise.
 pub fn mise_invocation_for_extension(ext: &str) -> Option<(&'static str, &'static [&'static str])> {
     match ext.to_ascii_lowercase().as_str() {
-        "py" => Some(("python@latest", &["python"] as &[&str])),
+        // uv run handles PEP 723 inline script dependencies automatically.
+        "py" => Some(("uv@latest", &["uv", "run"] as &[&str])),
         "js" | "mjs" | "cjs" => Some(("node@latest", &["node"])),
         // Deno runs TypeScript natively and needs net + read permissions.
         "ts" | "mts" => Some((

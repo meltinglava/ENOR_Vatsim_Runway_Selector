@@ -8,8 +8,11 @@ use nom::{
 use crate::optional_data::OptionalData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TemperatureInfo {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<i32>))]
     pub temp: OptionalData<i32, 2>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<i32>))]
     pub dew_point: OptionalData<i32, 2>,
 }
 

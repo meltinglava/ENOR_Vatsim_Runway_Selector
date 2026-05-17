@@ -1,0 +1,19 @@
+[tools]
+uv = "latest"
+
+[tasks.install]
+description = "Create virtual environment and install dependencies"
+run = "uv sync"
+
+[tasks.generate]
+description = "Regenerate generated/models.py from ../../openapi.yaml"
+run = """
+uv run --group dev \
+  datamodel-codegen \
+  --input ../../openapi.yaml \
+  --input-file-type openapi \
+  --output generated/models.py \
+  --output-model-type pydantic_v2.BaseModel \
+  --enum-field-as-literal all \
+  --field-constraints
+"""

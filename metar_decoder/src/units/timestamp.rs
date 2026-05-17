@@ -15,7 +15,9 @@ use nom::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Timestamp {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     timestamp: Zoned,
 }
 

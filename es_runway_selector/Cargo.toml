@@ -19,7 +19,8 @@ indexmap = { workspace = true }
 itertools = { workspace = true }
 jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
-runway_plugin_api = { path = "../runway_plugin_api" }
+runway_plugin_api = { path = "../runway_plugin_api", features = ["openapi"] }
+utoipa = { workspace = true }
 nom = { workspace = true }
 open = "5.3.5"
 regex = "1.12.3"

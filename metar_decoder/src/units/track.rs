@@ -13,6 +13,16 @@ use crate::optional_data::OptionalNumber;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Track(pub OptionalNumber<3>);
 
+#[cfg(feature = "openapi")]
+impl utoipa::PartialSchema for Track {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        Option::<u32>::schema()
+    }
+}
+
+#[cfg(feature = "openapi")]
+impl utoipa::ToSchema for Track {}
+
 #[derive(Debug, Error, Clone)]
 pub enum TrackParseError {
     #[error("Parse error: Invalid number: {0}")]

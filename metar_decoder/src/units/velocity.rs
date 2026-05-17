@@ -8,13 +8,17 @@ use nom::{
 use crate::optional_data::OptionalNumber;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WindVelocity {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<u32>))]
     pub velocity: OptionalNumber<2>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<u32>))]
     pub gust: Option<OptionalNumber<2>>,
     pub unit: VelocityUnit,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum VelocityUnit {
     MetersPerSecond,
     Knots,

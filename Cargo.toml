@@ -28,3 +28,4 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 tracing-test = "0.2.6"
 tracing-unwrap = { version = "1.0.1", features = ["log-location"] }
 axum = { version = "0.8.4", default-features = false, features = ["json", "tokio", "http1"] }
+utoipa = { version = "5", features = ["yaml", "axum_extras"] }

@@ -14,12 +14,14 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Obscuration {
     Described(DescribedObscuration),
     Cavok,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DescribedObscuration {
     pub visibility: Visibility,
     pub direction_visibility: Option<Vec<Visibility>>,
@@ -30,18 +32,24 @@ pub struct DescribedObscuration {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Rvr {
     pub runway: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<u32>))]
     pub value: OptionalData<u32, 4>,
     pub distance_modifier: Option<DistanceModifier>,
     pub comment: Option<Trend>,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VerticalVisibility {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<u32>))]
     pub visibility: OptionalData<u32, 3>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Trend {
     Increasing,
     Decreasing,
@@ -49,6 +57,7 @@ pub enum Trend {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Cloud {
     NCD, // No cloud detected
     NSC, // No significant clouds
@@ -57,13 +66,18 @@ pub enum Cloud {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CloudData {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<CloudCoverage>))]
     pub coverage: OptionalData<CloudCoverage, 3>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<CloudHeight>))]
     pub height: OptionalData<CloudHeight, 3>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub cloud_type: Option<OptionalData<String, 3>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum CloudCoverage {
     Few,
     Scattered,
@@ -72,6 +86,7 @@ pub enum CloudCoverage {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Visibility {
     pub value: VisibilityUnit,
     pub direction: Option<Direction>,
@@ -84,7 +99,24 @@ pub enum VisibilityUnit {
     StatuteMiles(StatuteMilesVisibility),
 }
 
+#[cfg(feature = "openapi")]
+impl utoipa::PartialSchema for VisibilityUnit {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::ObjectBuilder;
+        ObjectBuilder::new()
+            .description(Some(
+                "Visibility: Meters(nullable u32) or StatuteMiles(StatuteMilesVisibility)",
+            ))
+            .build()
+            .into()
+    }
+}
+
+#[cfg(feature = "openapi")]
+impl utoipa::ToSchema for VisibilityUnit {}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Direction {
     N,
     NE,
@@ -97,26 +129,32 @@ pub enum Direction {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StatuteMilesVisibility {
     pub whole: Option<u32>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<[u32; 2]>))]
     pub fraction: Option<(u32, u32)>,
     pub modifier: Option<DistanceModifier>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum DistanceModifier {
     LessThan,
     GreaterThan,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PresentWeather {
     pub intensity: Option<WeatherIntensity>,
     pub descriptor: Option<Qualifier>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<Option<WeatherPhenomenon>>))]
     pub phenomena: Vec<OptionalData<WeatherPhenomenon, 2>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum WeatherIntensity {
     Light,    // -
     Heavy,    // +
@@ -124,6 +162,7 @@ pub enum WeatherIntensity {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Qualifier {
     Shallow,      // MI
     Patches,      // BC
@@ -136,6 +175,7 @@ pub enum Qualifier {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum WeatherPhenomenon {
     DZ, // Drizzle
     RA, // Rain

@@ -29,6 +29,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Metar {
     pub raw: String,
     pub icao: String,
@@ -44,6 +45,7 @@ pub struct Metar {
     pub sea_surface_indicator: Option<SeaSurfaceIndicator>,
     pub tempo: Option<Trend>,
     pub becoming: Option<Trend>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<NatoMilCode>))]
     pub nato_mil_code: Option<OptionalData<NatoMilCode, 3>>,
     pub remarks: Option<String>,
 }

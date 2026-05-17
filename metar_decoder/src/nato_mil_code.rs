@@ -8,11 +8,14 @@ use nom::{
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct NatoMilCode {
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<Vec<String>>))]
     pub codes: Vec<(NatoMilCodeType, Option<char>)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum NatoMilCodeType {
     Blue,
     White,

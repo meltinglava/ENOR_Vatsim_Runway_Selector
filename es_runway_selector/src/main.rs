@@ -7,6 +7,7 @@ pub(crate) mod helpers_server;
 pub(crate) mod metar;
 pub(crate) mod mise_manager;
 pub(crate) mod plugin_client;
+pub(crate) mod plugin_updater;
 pub(crate) mod runway;
 pub(crate) mod sector_file;
 pub(crate) mod util;
@@ -42,6 +43,10 @@ struct Cli {
     /// Sets custom logging level for debugging for the json logs.
     /// (RUST_LOG env var still controls stdout)
     log_level: Option<String>,
+    #[clap(long)]
+    /// Print the OpenAPI spec for the plugin and helpers APIs, then exit.
+    /// Pipe to a file to regenerate openapi.yaml.
+    dump_openapi: bool,
     #[clap(long, hide = true)]
     previous_log_path: Option<PathBuf>,
 }
@@ -85,6 +90,17 @@ fn update() -> ApplicationResult<bool> {
 
 async fn run(cli: Cli) -> ApplicationResult<()> {
     let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
+
+    if let (Some(binary), Some(update_cfg)) = (
+        config.get_plugin_binary(),
+        config.get_plugin_update_config(),
+    ) {
+        match plugin_updater::check_and_update_plugin(binary, update_cfg).await {
+            Ok(true) => info!("Plugin updated successfully"),
+            Ok(false) => {}
+            Err(e) => warn!("Plugin update check failed: {e}"),
+        }
+    }
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
         let handles = config_task1.run_apps(false).await;
@@ -211,6 +227,29 @@ fn main() -> ApplicationResult<()> {
         .install_default()
         .expect("Failed to install ring crypto provider");
     let cli = Cli::parse();
+
+    if cli.dump_openapi {
+        use utoipa::OpenApi;
+        let mut spec = runway_plugin_api::PluginApiDoc::openapi();
+        spec.merge(helpers_server::HelpersApiDoc::openapi());
+        spec.info.title = "Runway Plugin API".to_string();
+        spec.info.description = Some(
+            "\
+Two HTTP APIs used by the es_runway_selector plugin system.\n\n\
+**Plugin API** — your plugin must implement these endpoints.\n\
+`es_runway_selector` spawns your binary with `--port N --helpers-port M`,\n\
+waits for `/health` to return 200, then POST to `/runway-selections` once per run.\n\n\
+**Helpers API** — hosted by `es_runway_selector` on the port passed as `--helpers-port`.\n\
+Call these from your plugin to use built-in runway selection algorithms.\n"
+                .to_string(),
+        );
+        print!(
+            "{}",
+            spec.to_yaml().expect("OpenAPI spec serialization failed")
+        );
+        return Ok(());
+    }
+
     let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) && cli.previous_log_path.is_none() {

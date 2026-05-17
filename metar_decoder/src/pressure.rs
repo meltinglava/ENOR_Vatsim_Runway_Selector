@@ -8,18 +8,22 @@ use nom::{
 use crate::optional_data::OptionalData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Pressure {
     pub qnh: Option<PressureSingle>,
     pub altimeter: Option<PressureSingle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PressureSingle {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<u32>))]
     pub value: OptionalData<u32, 4>,
     pub unit: PressureUnit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum PressureUnit {
     Hectopascals,
     InchesOfMercury,

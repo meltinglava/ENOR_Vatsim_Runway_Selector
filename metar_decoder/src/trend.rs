@@ -12,6 +12,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Trend {
     pub wind: Option<Wind>,
     pub visibility: Option<Visibility>,

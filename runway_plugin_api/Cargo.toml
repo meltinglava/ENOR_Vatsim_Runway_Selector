@@ -5,5 +5,9 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 serde = { workspace = true }
+utoipa = { workspace = true, optional = true }

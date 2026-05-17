@@ -6,6 +6,18 @@ es_main_window_delay_ms = 2000
 # Example: plugin_binary = "C:\\Tools\\enor_plugin.exe"
 # plugin_binary =
 
+# Optional: auto-update the plugin binary from a GitHub or GitLab release.
+# Release assets must include the platform target in their filename, e.g.:
+#   enor_plugin-v1.2.3-windows-x64.zip
+#   enor_plugin-v1.2.3-linux-x64.tar.gz
+# Recognised targets: windows-x64, macos-arm64, macos-x64, linux-x64, linux-musl-x64
+#
+# [plugin_update]
+# backend = "github"                 # or "gitlab"
+# repo    = "owner/repository"
+# bin_name = "enor_plugin"
+# # gitlab_host = "gitlab.example.com"   # gitlab only; defaults to gitlab.com
+
 ignore_airports = [
   "ENAE",
   "ENAS",

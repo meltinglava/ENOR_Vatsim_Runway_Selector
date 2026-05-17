@@ -1,0 +1,7 @@
+[tools]
+deno = "latest"
+node = "22" # needed only for openapi-typescript code generation
+
+[tasks.generate]
+description = "Regenerate generated/api.ts from ../../openapi.yaml"
+run = "npx --yes openapi-typescript@7 ../../openapi.yaml -o generated/api.ts"

@@ -13,13 +13,16 @@ use nom::{
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Wind {
     pub dir: WindDirection,
     pub speed: WindVelocity,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Vec<u32>>))]
     pub varying: Option<(Track, Track)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum WindDirection {
     Heading(Track),
     Variable,

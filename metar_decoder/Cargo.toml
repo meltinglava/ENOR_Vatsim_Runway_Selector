@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Pacakge that parses metars into set structs"
 
+[features]
+openapi = ["dep:utoipa"]
+
 [dependencies]
 itertools = { workspace = true }
 jiff = { workspace = true }
@@ -15,6 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing-test = { workspace = true }

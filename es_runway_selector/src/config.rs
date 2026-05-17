@@ -29,6 +29,25 @@ use crate::{airport::RunwayInUseSource, airports::Airports, error::ApplicationRe
 
 const DEFAULT_SECTOR_FILE_PREFIX: &str = "ENOR";
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[skip_serializing_none]
+pub(crate) struct PluginUpdateConfig {
+    pub backend: UpdateBackend,
+    /// GitHub: `"owner/repo"` — GitLab: `"group/project"` (or nested path)
+    pub repo: String,
+    /// Name of the binary as it appears in release asset filenames.
+    pub bin_name: String,
+    /// GitLab only. Defaults to `"gitlab.com"` when omitted.
+    pub gitlab_host: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UpdateBackend {
+    Github,
+    Gitlab,
+}
+
 pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
     ProjectDirs::from("", "meltinglava", "es_runway_selector")
         .expect("Failed to get project directories")
@@ -55,6 +74,8 @@ struct Configurable {
     /// Path to a runway-selector plugin binary.
     /// The binary must accept `--port <N>` and implement the runway plugin HTTP API.
     plugin_binary: Option<PathBuf>,
+    /// Optional auto-update configuration for the plugin binary.
+    plugin_update: Option<PluginUpdateConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -99,6 +120,10 @@ impl ESConfig {
 
     pub fn get_plugin_binary(&self) -> Option<&std::path::Path> {
         self.config.plugin_binary.as_deref()
+    }
+
+    pub fn get_plugin_update_config(&self) -> Option<&PluginUpdateConfig> {
+        self.config.plugin_update.as_ref()
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {

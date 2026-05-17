@@ -8,8 +8,11 @@ use nom::{
 use crate::{optional_data::OptionalData, temperature::nom_maybe_negative_temp};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SeaSurfaceIndicator {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<i32>))]
     pub temperature: OptionalData<i32, 2>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<StateOfSea>))]
     pub state_of_sea: OptionalData<StateOfSea, 2>,
 }
 
@@ -19,7 +22,24 @@ pub enum StateOfSea {
     SignificantWaveHeight(OptionalData<u16, 3>), // in decimeters
 }
 
+#[cfg(feature = "openapi")]
+impl utoipa::PartialSchema for StateOfSea {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::ObjectBuilder;
+        ObjectBuilder::new()
+            .description(Some(
+                "Sea state: SeaState(nullable CodeTable3700) or SignificantWaveHeight(nullable u16 in dm)",
+            ))
+            .build()
+            .into()
+    }
+}
+
+#[cfg(feature = "openapi")]
+impl utoipa::ToSchema for StateOfSea {}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[repr(u8)]
 pub enum CodeTable3700 {
     CalmGlassLike = 0,
