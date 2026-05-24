@@ -1,13 +1,19 @@
 [[executable]]
-name = "EuroScope"
-prf = "enor_rads.prf"
-
-[[executable]]
-name = "EuroScope"
-prf = "enor_gnd.prf"
-
-[[executable]]
 name = "TrackAudio"
 
 [[executable]]
 name = "vacs"
+
+[[profile]]
+name = "RADS"
+
+[[profile.executable]]
+name = "EuroScope"
+prf = "enor_rads.prf"
+
+[[profile]]
+name = "GND"
+
+[[profile.executable]]
+name = "EuroScope"
+prf = "enor_gnd.prf"

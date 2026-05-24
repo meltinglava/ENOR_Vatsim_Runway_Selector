@@ -151,20 +151,6 @@ struct AreaFileConfig {
     default_runways: IndexMap<String, u8>,
 }
 
-/// One named profile override, from `[[profiles]]` in `config/<AREA>/profiles.toml`.
-#[derive(Debug, Clone, Deserialize)]
-struct AreaProfileEntry {
-    name: String,
-    /// Additional airports to ignore (merged with the area list).
-    #[serde(default)]
-    ignore_airports: IndexSet<String>,
-    /// Per-profile default runway overrides (override area defaults).
-    #[serde(default)]
-    default_runways: IndexMap<String, u8>,
-    /// Override the sector file directory for this profile only.
-    sector_file_dir: Option<PathBuf>,
-}
-
 /// Returns `true` if `config_dir` contains at least one area subdirectory
 /// (a subdirectory that has an `area.toml` file inside it).
 fn has_area_directories(config_dir: &Path) -> bool {
@@ -221,54 +207,23 @@ fn load_area_based_profiles(config_dir: &Path, only_area: Option<&str>) -> Vec<P
             }
         };
 
-        let profiles_path = area_dir.join("profiles.toml");
-        if profiles_path.exists() {
-            // Multi-profile area: each entry gets a qualified name "<AREA>/<profile>".
-            let area_profiles: Vec<AreaProfileEntry> = fs::read_to_string(&profiles_path)
-                .ok()
-                .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-                .and_then(|v| v.get("profiles").cloned())
-                .and_then(|arr| toml::Value::try_into(arr).ok())
-                .unwrap_or_default();
-
-            debug!(area = %area_name, count = area_profiles.len(), "Found profiles.toml with profile entries");
-
-            for entry in area_profiles {
-                let sector_file_dir = entry
-                    .sector_file_dir
-                    .or_else(|| area_cfg.sector_file_dir.clone());
-
-                let mut ignore_airports = area_cfg.ignore_airports.clone();
-                ignore_airports.extend(entry.ignore_airports);
-
-                // Profile overrides take precedence over area defaults.
-                let mut default_runways = area_cfg.default_runways.clone();
-                for (icao, rwy) in entry.default_runways {
-                    default_runways.insert(icao, rwy);
-                }
-
-                let profile_name = format!("{}/{}", area_name, entry.name);
-                debug!(
-                    profile = %profile_name,
-                    sector_file_dir = ?sector_file_dir,
-                    "Built profile"
-                );
-                profiles.push(ProfileConfig {
-                    name: profile_name,
-                    sector_file_prefix: area_cfg.sector_file_prefix.clone(),
-                    sector_file_dir,
-                    ignore_airports,
-                    default_runways,
-                    area: None,
-                });
+        // Read sub-profile names from [[profile]] entries in app_launchers.toml.
+        let sub_profile_names: Vec<String> = {
+            let launchers_path = area_dir.join("app_launchers.toml");
+            if launchers_path.exists() {
+                fs::read_to_string(&launchers_path)
+                    .ok()
+                    .and_then(|raw| toml::from_str::<AppLaunchersFile>(&raw).ok())
+                    .map(|f| f.profile.into_iter().map(|p| p.name).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
             }
-        } else {
+        };
+
+        if sub_profile_names.is_empty() {
             // Single-profile area: profile is named after the area folder.
-            debug!(
-                profile = %area_name,
-                sector_file_dir = ?area_cfg.sector_file_dir,
-                "Built single profile for area"
-            );
+            debug!(profile = %area_name, "Built single profile for area");
             profiles.push(ProfileConfig {
                 name: area_name,
                 sector_file_prefix: area_cfg.sector_file_prefix,
@@ -277,6 +232,20 @@ fn load_area_based_profiles(config_dir: &Path, only_area: Option<&str>) -> Vec<P
                 default_runways: area_cfg.default_runways,
                 area: None,
             });
+        } else {
+            // Multi-profile area: one profile per [[profile]] entry in app_launchers.toml.
+            debug!(area = %area_name, profiles = ?sub_profile_names, "Built sub-profiles from app_launchers.toml");
+            for sub_name in sub_profile_names {
+                let profile_name = format!("{}/{}", area_name, sub_name);
+                profiles.push(ProfileConfig {
+                    name: profile_name,
+                    sector_file_prefix: area_cfg.sector_file_prefix.clone(),
+                    sector_file_dir: area_cfg.sector_file_dir.clone(),
+                    ignore_airports: area_cfg.ignore_airports.clone(),
+                    default_runways: area_cfg.default_runways.clone(),
+                    area: None,
+                });
+            }
         }
     }
 
@@ -327,8 +296,27 @@ impl GlobalConfigurable {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub(crate) struct AppLauncher {
     pub name: String,
+    #[serde(default)]
     pub args: Vec<String>,
     pub prf: Option<PathBuf>,
+}
+
+/// Deserialization shape for `app_launchers.toml`.
+#[derive(Debug, Deserialize, Default)]
+struct AppLaunchersFile {
+    /// Launchers that run for every profile.
+    #[serde(default)]
+    executable: Vec<AppLauncher>,
+    /// Optional named profiles; each adds profile-specific launchers on top of `executable`.
+    #[serde(default)]
+    profile: Vec<AppLauncherProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLauncherProfile {
+    name: String,
+    #[serde(default)]
+    executable: Vec<AppLauncher>,
 }
 
 // ─── ESConfig ─────────────────────────────────────────────────────────────────
@@ -530,13 +518,16 @@ impl ESConfig {
             None => query_user_euroscope_config_folder(&mut global, &config_file_path)?,
         };
 
+        // Sub-profile name: "ENOR/RADS" → Some("RADS"), "ENOR" → None.
+        let sub_profile = profile.name.split('/').nth(1);
+
         // App launchers: area-local takes precedence; fall back to root config dir.
         let app_launchers = if area_dir.join("app_launchers.toml").exists() {
-            debug!(area = %area_name, "Loading app launchers from area directory");
-            get_app_launchers_from_dir(&area_dir)
+            debug!(area = %area_name, sub_profile = ?sub_profile, "Loading app launchers from area directory");
+            get_app_launchers_from_dir(&area_dir, sub_profile)
         } else {
             debug!("Loading app launchers from root config dir");
-            get_app_launchers_from_dir(&config_dir)
+            get_app_launchers_from_dir(&config_dir, sub_profile)
         };
 
         debug!(count = app_launchers.len(), "Loaded app launchers");
@@ -872,83 +863,53 @@ impl AppLauncher {
     }
 }
 
-fn get_app_launchers_from_dir(dir: &Path) -> IndexSet<AppLauncher> {
-    let app_launchers_file_path = dir.join("app_launchers.toml");
-
-    if !app_launchers_file_path.exists() {
-        debug!(path = %app_launchers_file_path.display(), "No app_launchers.toml found");
+/// Load app launchers from `dir/app_launchers.toml`.
+///
+/// `sub_profile` is the portion after the "/" in a profile name like `"ENOR/RADS"`.
+///
+/// When the file contains `[[profile]]` entries, common `[[executable]]` entries always run
+/// and the matching profile's `[[profile.executable]]` entries are appended.
+///
+/// When there are no `[[profile]]` entries (legacy / single-profile format),
+/// all `[[executable]]` entries are returned regardless of `sub_profile`.
+fn get_app_launchers_from_dir(dir: &Path, sub_profile: Option<&str>) -> IndexSet<AppLauncher> {
+    let path = dir.join("app_launchers.toml");
+    if !path.exists() {
+        debug!(path = %path.display(), "No app_launchers.toml found");
         return IndexSet::new();
     }
-    debug!(path = %app_launchers_file_path.display(), "Loading app launchers");
+    debug!(path = %path.display(), "Loading app launchers");
 
-    let raw_app_launchers_file = fs::read_to_string(&app_launchers_file_path).unwrap_or_log();
-    let toml_file: toml::Value = toml::from_str(&raw_app_launchers_file).unwrap_or_log();
-    let toml::Value::Table(map) = &toml_file else {
-        warn!(
-            "App launchers config file is not a table, it is: {:?}",
-            toml_file
-        );
-        return IndexSet::new();
-    };
-    let Some(array) = map.get("executable") else {
-        warn!(
-            "App launchers config file is not an array, it is: {:?}",
-            toml_file
-        );
-        return IndexSet::new();
-    };
-    let toml::Value::Array(executables) = array else {
-        warn!(
-            "App launchers config file 'executable' is not an array, it is: {:?}",
-            array
-        );
-        return IndexSet::new();
+    let raw = fs::read_to_string(&path).unwrap_or_log();
+    let file: AppLaunchersFile = match toml::from_str(&raw) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "Failed to parse app_launchers.toml");
+            return IndexSet::new();
+        }
     };
 
-    let mut app_launchers = IndexSet::new();
-    for exe in executables {
-        let toml::Value::Table(exe_table) = exe else {
-            warn!("App launcher entry is not a table, it is: {:?}", exe);
-            continue;
-        };
-        let name = match exe_table.get("name") {
-            Some(toml::Value::String(s)) => s.clone(),
-            _ => {
-                warn!(
-                    "App launcher entry missing 'name' field or it is not a string: {:?}",
-                    exe_table
-                );
-                continue;
-            }
-        };
-        let args = match exe_table.get("args") {
-            Some(toml::Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| {
-                    if let toml::Value::String(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        let prf = match exe_table.get("prf") {
-            Some(toml::Value::String(s)) => Some(PathBuf::from(s)),
-            _ => None,
-        };
-        let launcher = AppLauncher { name, args, prf };
-        debug!(
-            name = %launcher.name,
-            prf = ?launcher.prf,
-            "Loaded app launcher"
-        );
-        app_launchers.insert(launcher);
+    let mut launchers: Vec<AppLauncher> = file.executable;
+
+    if file.profile.is_empty() {
+        // Legacy / single-profile format: all executables are already in `launchers`.
+    } else if let Some(name) = sub_profile {
+        match file
+            .profile
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+        {
+            Some(p) => launchers.extend(p.executable),
+            None => warn!(sub_profile = %name, "Sub-profile not found in app_launchers.toml"),
+        }
     }
 
-    debug!(count = app_launchers.len(), "Loaded app launchers");
-    app_launchers
+    let result: IndexSet<AppLauncher> = launchers.into_iter().collect();
+    for launcher in &result {
+        debug!(name = %launcher.name, prf = ?launcher.prf, "Loaded app launcher");
+    }
+    debug!(count = result.len(), "Loaded app launchers");
+    result
 }
 
 // ─── Sector file discovery ────────────────────────────────────────────────────
@@ -1280,28 +1241,39 @@ mod tests {
 
     #[test]
     fn test_app_launcher_reader() {
-        let config_file = get_app_launchers_from_dir(Path::new("."));
-        let mut expected = IndexSet::new();
-        expected.insert(AppLauncher {
-            name: "EuroScope".to_string(),
-            args: vec![],
-            prf: Some(PathBuf::from("enor_rads.prf")),
-        });
-        expected.insert(AppLauncher {
-            name: "EuroScope".to_string(),
-            args: vec![],
-            prf: Some(PathBuf::from("enor_gnd.prf")),
-        });
-        expected.insert(AppLauncher {
+        // Common launchers only (no sub-profile).
+        let common = get_app_launchers_from_dir(Path::new("."), None);
+        let mut expected_common = IndexSet::new();
+        expected_common.insert(AppLauncher {
             name: "TrackAudio".to_string(),
             args: vec![],
             prf: None,
         });
-        expected.insert(AppLauncher {
+        expected_common.insert(AppLauncher {
             name: "vacs".to_string(),
             args: vec![],
             prf: None,
         });
-        assert_eq!(config_file, expected);
+        assert_eq!(common, expected_common);
+
+        // RADS sub-profile: common + EuroScope with enor_rads.prf.
+        let rads = get_app_launchers_from_dir(Path::new("."), Some("RADS"));
+        let mut expected_rads = expected_common.clone();
+        expected_rads.insert(AppLauncher {
+            name: "EuroScope".to_string(),
+            args: vec![],
+            prf: Some(PathBuf::from("enor_rads.prf")),
+        });
+        assert_eq!(rads, expected_rads);
+
+        // GND sub-profile: common + EuroScope with enor_gnd.prf.
+        let gnd = get_app_launchers_from_dir(Path::new("."), Some("GND"));
+        let mut expected_gnd = expected_common.clone();
+        expected_gnd.insert(AppLauncher {
+            name: "EuroScope".to_string(),
+            args: vec![],
+            prf: Some(PathBuf::from("enor_gnd.prf")),
+        });
+        assert_eq!(gnd, expected_gnd);
     }
 }
