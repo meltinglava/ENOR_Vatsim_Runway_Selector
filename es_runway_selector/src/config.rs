@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::{process::Command, time::sleep};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
@@ -54,11 +54,14 @@ pub(crate) struct PluginConfig {
 fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
     let path = dir.join("plugins.toml");
     if !path.exists() {
+        debug!(dir = %dir.display(), "No plugins.toml found");
         return Vec::new();
     }
+    debug!(path = %path.display(), "Loading plugins");
     let raw = fs::read_to_string(&path).unwrap_or_log();
     let value: toml::Value = toml::from_str(&raw).unwrap_or_log();
     let Some(toml::Value::Array(arr)) = value.get("plugins") else {
+        warn!(path = %path.display(), "plugins.toml has no [[plugins]] array");
         return Vec::new();
     };
     let mut plugins: Vec<PluginConfig> = arr
@@ -71,10 +74,24 @@ fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
         if cmd.parent().map(|p| p == Path::new("")).unwrap_or(true) {
             let local = dir.join(&plugin.command);
             if local.exists() {
-                plugin.command = local.to_string_lossy().into_owned();
+                let resolved = local.to_string_lossy().into_owned();
+                debug!(
+                    plugin = %plugin.name,
+                    original = %plugin.command,
+                    resolved = %resolved,
+                    "Resolved plugin command to local path"
+                );
+                plugin.command = resolved;
+            } else {
+                debug!(
+                    plugin = %plugin.name,
+                    command = %plugin.command,
+                    "Plugin command not found locally; will rely on PATH"
+                );
             }
         }
     }
+    debug!(count = plugins.len(), dir = %dir.display(), "Loaded plugins");
     plugins
 }
 
@@ -105,16 +122,22 @@ pub(crate) struct ProfileConfig {
 fn load_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
     let path = config_dir.join("profiles.toml");
     if !path.exists() {
+        debug!(dir = %config_dir.display(), "No profiles.toml found");
         return Vec::new();
     }
+    debug!(path = %path.display(), "Loading flat profiles");
     let raw = fs::read_to_string(&path).unwrap_or_log();
     let value: toml::Value = toml::from_str(&raw).unwrap_or_log();
     let Some(toml::Value::Array(arr)) = value.get("profiles") else {
+        warn!(path = %path.display(), "profiles.toml has no [[profiles]] array");
         return Vec::new();
     };
-    arr.iter()
+    let profiles: Vec<ProfileConfig> = arr
+        .iter()
         .filter_map(|v| toml::Value::try_into(v.clone()).ok())
-        .collect()
+        .collect();
+    debug!(count = profiles.len(), "Loaded profiles from profiles.toml");
+    profiles
 }
 
 // ─── Area-folder config ───────────────────────────────────────────────────────
@@ -169,6 +192,7 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
     let mut profiles = Vec::new();
 
     let Ok(entries) = fs::read_dir(config_dir) else {
+        warn!(dir = %config_dir.display(), "Cannot read config directory");
         return profiles;
     };
 
@@ -178,14 +202,24 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
         .collect();
     area_dirs.sort_by_key(|e| e.file_name());
 
+    debug!(count = area_dirs.len(), "Found area directories");
+
     for dir_entry in area_dirs {
         let area_dir = dir_entry.path();
         let area_name = dir_entry.file_name().to_string_lossy().to_string();
 
-        let area_cfg: AreaFileConfig = fs::read_to_string(area_dir.join("area.toml"))
+        debug!(area = %area_name, path = %area_dir.display(), "Processing area directory");
+
+        let area_cfg: AreaFileConfig = match fs::read_to_string(area_dir.join("area.toml"))
             .ok()
             .and_then(|raw| toml::from_str(&raw).ok())
-            .unwrap_or_default();
+        {
+            Some(cfg) => cfg,
+            None => {
+                warn!(area = %area_name, "area.toml missing or could not be parsed; using defaults");
+                AreaFileConfig::default()
+            }
+        };
 
         let profiles_path = area_dir.join("profiles.toml");
         if profiles_path.exists() {
@@ -196,6 +230,8 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                 .and_then(|v| v.get("profiles").cloned())
                 .and_then(|arr| toml::Value::try_into(arr).ok())
                 .unwrap_or_default();
+
+            debug!(area = %area_name, count = area_profiles.len(), "Found profiles.toml with profile entries");
 
             for entry in area_profiles {
                 let sector_file_dir = entry
@@ -218,8 +254,15 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                     default_runways.insert(icao, rwy);
                 }
 
+                let profile_name = format!("{}/{}", area_name, entry.name);
+                debug!(
+                    profile = %profile_name,
+                    plugins = ?plugins,
+                    sector_file_dir = ?sector_file_dir,
+                    "Built profile"
+                );
                 profiles.push(ProfileConfig {
-                    name: format!("{}/{}", area_name, entry.name),
+                    name: profile_name,
                     sector_file_prefix: area_cfg.sector_file_prefix.clone(),
                     sector_file_dir,
                     ignore_airports,
@@ -230,6 +273,12 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
             }
         } else {
             // Single-profile area: profile is named after the area folder.
+            debug!(
+                profile = %area_name,
+                plugins = ?area_cfg.plugins,
+                sector_file_dir = ?area_cfg.sector_file_dir,
+                "Built single profile for area"
+            );
             profiles.push(ProfileConfig {
                 name: area_name,
                 sector_file_prefix: area_cfg.sector_file_prefix,
@@ -242,6 +291,10 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
         }
     }
 
+    debug!(
+        count = profiles.len(),
+        "Built profiles from area directories"
+    );
     profiles
 }
 
@@ -310,20 +363,28 @@ impl ESConfig {
             .expect("config file has no parent")
             .to_path_buf();
 
+        info!(config_dir = %config_dir.display(), "Using config directory");
+
         // On fresh installs, auto-create an area folder for each sector file found.
         if !has_area_directories(&config_dir) && !config_dir.join("profiles.toml").exists() {
+            info!(
+                "No area config found; scanning EuroScope directories to auto-create area configs"
+            );
             auto_create_area_configs(&config_dir);
         }
 
         let using_area_dirs = has_area_directories(&config_dir);
         let profiles = if using_area_dirs {
+            debug!("Using area-directory based profiles");
             load_area_based_profiles(&config_dir)
         } else {
+            debug!("Using flat profiles.toml");
             load_profiles(&config_dir)
         };
 
         let profile = if profiles.is_empty() {
             // No profiles configured – synthesise one from the legacy flat config.
+            debug!("No profiles configured; falling back to legacy flat config");
             ProfileConfig {
                 name: "default".to_string(),
                 sector_file_prefix: None,
@@ -337,6 +398,13 @@ impl ESConfig {
             select_profile(profiles, requested_profile)?
         };
 
+        info!(
+            profile = %profile.name,
+            plugins = ?profile.plugins,
+            ignore_airports = ?profile.ignore_airports,
+            "Active profile"
+        );
+
         // Merge in downloaded area config if an `area` is referenced.
         let profile = merge_area_config(profile, &config_dir);
 
@@ -348,13 +416,27 @@ impl ESConfig {
             .unwrap_or(&profile.name)
             .to_string();
         let area_dir = config_dir.join(&area_name);
+        debug!(area_dir = %area_dir.display(), "Area directory");
 
         // Plugins: area-local plugins.toml takes precedence; fall back to root.
         let all_plugins = if area_dir.join("plugins.toml").exists() {
+            debug!(area = %area_name, "Loading plugins from area directory");
             load_plugins(&area_dir)
         } else {
+            debug!("No area-local plugins.toml; loading plugins from root config dir");
             load_plugins(&config_dir)
         };
+
+        for p in &all_plugins {
+            debug!(plugin = %p.name, command = %p.command, working_dir = ?p.working_dir, "Available plugin");
+        }
+        let active_names: Vec<&str> = profile.plugins.iter().map(String::as_str).collect();
+        for name in &active_names {
+            if !all_plugins.iter().any(|p| p.name == *name) {
+                warn!(plugin = %name, "Plugin referenced by profile not found in plugins.toml");
+            }
+        }
+        debug!(active = ?active_names, "Plugins active for this profile");
 
         // Sector file discovery: profile's explicit dir > auto search (prefix filter).
         let prefix = profile
@@ -362,20 +444,44 @@ impl ESConfig {
             .clone()
             .unwrap_or_else(|| DEFAULT_SECTOR_FILE_PREFIX.to_string());
 
-        let sct_result = profile
-            .sector_file_dir
-            .as_ref()
-            .and_then(|d| search_for_sct_with_possibilities(&[d]))
-            .or_else(|| search_for_newest_sct_file_with_prefix(&prefix))
-            .or_else(|| global.find_from_config());
+        debug!(prefix = %prefix, "Searching for sector file");
+
+        let sct_result = if let Some(d) = &profile.sector_file_dir {
+            debug!(dir = %d.display(), "Trying explicit sector_file_dir from profile");
+            search_for_sct_with_possibilities(&[d])
+        } else {
+            None
+        }
+        .or_else(|| {
+            debug!(
+                "Searching standard EuroScope directories for prefix '{}'",
+                prefix
+            );
+            search_for_newest_sct_file_with_prefix(&prefix)
+        })
+        .or_else(|| {
+            if let Some(d) = &global.euroscope_config_folder {
+                debug!(dir = %d.display(), "Trying euroscope_config_folder from global config");
+            }
+            global.find_from_config()
+        });
 
         let (sct_path, sector_file_prefix) = match sct_result {
-            Some(r) => r,
+            Some(r) => {
+                info!(
+                    path = %r.0.display(),
+                    prefix = %r.1,
+                    "Sector file found"
+                );
+                r
+            }
             None if using_area_dirs => {
                 warn!(
-                    "No sector file found for profile '{}'. Add 'sector_file_dir' to \
-                     {}/area.toml or place your EuroScope files in Documents/Euroscope.",
-                    profile.name, area_name
+                    profile = %profile.name,
+                    area = %area_name,
+                    "No sector file found. Add 'sector_file_dir' to {}/area.toml \
+                     or place your EuroScope files in Documents/Euroscope.",
+                    area_name
                 );
                 return None;
             }
@@ -384,10 +490,14 @@ impl ESConfig {
 
         // App launchers: area-local takes precedence; fall back to root config dir.
         let app_launchers = if area_dir.join("app_launchers.toml").exists() {
+            debug!(area = %area_name, "Loading app launchers from area directory");
             get_app_launchers_from_dir(&area_dir)
         } else {
+            debug!("Loading app launchers from root config dir");
             get_app_launchers_from_dir(&config_dir)
         };
+
+        debug!(count = app_launchers.len(), "Loaded app launchers");
 
         Some(Self {
             euroscope_config_folder: sct_path,
@@ -738,12 +848,10 @@ fn get_app_launchers_from_dir(dir: &Path) -> IndexSet<AppLauncher> {
     let app_launchers_file_path = dir.join("app_launchers.toml");
 
     if !app_launchers_file_path.exists() {
-        debug!(
-            "App launchers config file does not exist at {:?}",
-            app_launchers_file_path
-        );
+        debug!(path = %app_launchers_file_path.display(), "No app_launchers.toml found");
         return IndexSet::new();
     }
+    debug!(path = %app_launchers_file_path.display(), "Loading app launchers");
 
     let raw_app_launchers_file = fs::read_to_string(&app_launchers_file_path).unwrap_or_log();
     let toml_file: toml::Value = toml::from_str(&raw_app_launchers_file).unwrap_or_log();
@@ -802,13 +910,16 @@ fn get_app_launchers_from_dir(dir: &Path) -> IndexSet<AppLauncher> {
             Some(toml::Value::String(s)) => Some(PathBuf::from(s)),
             _ => None,
         };
-        app_launchers.insert(AppLauncher { name, args, prf });
+        let launcher = AppLauncher { name, args, prf };
+        debug!(
+            name = %launcher.name,
+            prf = ?launcher.prf,
+            "Loaded app launcher"
+        );
+        app_launchers.insert(launcher);
     }
 
-    debug!(
-        "Loaded app launchers from {:?}: {:?}",
-        app_launchers_file_path, app_launchers
-    );
+    debug!(count = app_launchers.len(), "Loaded app launchers");
     app_launchers
 }
 
@@ -956,8 +1067,14 @@ fn extract_area_prefix(stem: &str) -> Option<String> {
 fn auto_create_area_configs(config_dir: &Path) {
     let search_dirs = euroscope_data_dirs();
     if search_dirs.is_empty() {
+        debug!("No EuroScope data directories found; skipping area auto-creation");
         return;
     }
+
+    debug!(
+        dirs = ?search_dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>(),
+        "Scanning EuroScope directories for sector files"
+    );
 
     let mut found_prefixes: IndexSet<String> = IndexSet::new();
     for dir in &search_dirs {
@@ -973,18 +1090,27 @@ fn auto_create_area_configs(config_dir: &Path) {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
                 && let Some(prefix) = extract_area_prefix(stem)
             {
+                debug!(file = %path.display(), prefix = %prefix, "Detected area prefix from sector file");
                 found_prefixes.insert(prefix);
             }
         }
     }
 
+    if found_prefixes.is_empty() {
+        debug!("No sector files found; no area configs created");
+        return;
+    }
+
+    debug!(prefixes = ?found_prefixes, "Detected area prefixes");
+
     for prefix in &found_prefixes {
         let area_dir = config_dir.join(prefix);
         if area_dir.exists() {
+            debug!(area = %prefix, "Area directory already exists; skipping");
             continue;
         }
         if let Err(e) = fs::create_dir_all(&area_dir) {
-            warn!("Failed to create area directory {:?}: {}", area_dir, e);
+            warn!(area = %prefix, error = %e, "Failed to create area directory");
             continue;
         }
         let content = format!(
@@ -998,9 +1124,9 @@ fn auto_create_area_configs(config_dir: &Path) {
              # ENZV = 18\n"
         );
         if let Err(e) = fs::write(area_dir.join("area.toml"), &content) {
-            warn!("Failed to write area.toml for {}: {}", prefix, e);
+            warn!(area = %prefix, error = %e, "Failed to write area.toml");
         } else {
-            tracing::info!("Created area config for {} at {:?}", prefix, area_dir);
+            info!(area = %prefix, path = %area_dir.display(), "Created area config directory");
         }
     }
 }

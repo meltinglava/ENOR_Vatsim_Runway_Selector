@@ -115,6 +115,15 @@ fn update() -> ApplicationResult<bool> {
 }
 
 async fn run(cli: Cli) -> ApplicationResult<()> {
+    // ── --generate-openapi ────────────────────────────────────────────────────
+    if cli.generate_openapi {
+        let json = api_server::generate_openapi_json();
+        std::fs::write("openapi.json", &json)?;
+        info!("OpenAPI spec written to openapi.json");
+        println!("openapi.json written ({} bytes)", json.len());
+        return Ok(());
+    }
+
     // ── --list-profiles ───────────────────────────────────────────────────────
     if cli.list_profiles {
         let profiles = config::list_profiles(cli.clean_config);
@@ -128,15 +137,6 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
                 println!("  {name}");
             }
         }
-        return Ok(());
-    }
-
-    // ── --generate-openapi ────────────────────────────────────────────────────
-    if cli.generate_openapi {
-        let json = api_server::generate_openapi_json();
-        std::fs::write("openapi.json", &json)?;
-        info!("OpenAPI spec written to openapi.json");
-        println!("openapi.json written ({} bytes)", json.len());
         return Ok(());
     }
 
