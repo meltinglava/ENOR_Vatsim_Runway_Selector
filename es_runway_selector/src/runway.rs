@@ -1,12 +1,20 @@
 #[derive(Debug)]
 pub struct RunwayDirection {
-    pub degrees: u16,
     pub identifier: String,
+    pub degrees: u16,
 }
 
 #[derive(Debug)]
 pub struct Runway {
-    pub runways: [RunwayDirection; 2],
+    pub primary: RunwayDirection,
+    pub reciprocal: Option<RunwayDirection>,
+}
+
+impl Runway {
+    /// Iterate over whichever directions are present (1 or 2).
+    pub fn iter(&self) -> impl Iterator<Item = &RunwayDirection> {
+        std::iter::once(&self.primary).chain(self.reciprocal.iter())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

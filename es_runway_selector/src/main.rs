@@ -1,9 +1,14 @@
 pub(crate) mod airport;
 pub(crate) mod airports;
+pub(crate) mod api_server;
+pub(crate) mod area_config;
 pub(crate) mod atis_parser;
 pub(crate) mod config;
 pub(crate) mod error;
 pub(crate) mod metar;
+pub(crate) mod plugin_manager;
+pub(crate) mod protocol_convert;
+pub(crate) mod report_builder;
 pub(crate) mod runway;
 pub(crate) mod sector_file;
 pub(crate) mod util;
@@ -20,6 +25,7 @@ use clap::Parser;
 use config::ESConfig;
 use error::ApplicationResult;
 use jiff::{Zoned, tz::TimeZone};
+use plugin_manager::PluginManager;
 use self_update::{
     Status::{UpToDate, Updated},
     cargo_crate_version,
@@ -29,18 +35,42 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_unwrap::{OptionExt, ResultExt};
 
+use crate::area_config::{download_area, list_manifest_areas, load_area_entries};
+
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
     #[clap(long, short)]
-    /// Resets the config file (but keeps the es folder information)
+    /// Resets the config file (but keeps the es folder information).
     clean_config: bool,
+
     #[clap(long, short)]
     /// Sets custom logging level for debugging for the json logs.
     /// (RUST_LOG env var still controls stdout)
     log_level: Option<String>,
+
     #[clap(long, hide = true)]
     previous_log_path: Option<PathBuf>,
+
+    /// Select a profile by name.
+    /// Use the area name ("ENOR") or the qualified name ("ENOR/TWR").
+    /// When omitted the single profile is used automatically.
+    #[clap(long, short)]
+    profile: Option<String>,
+
+    /// Write the combined plugin + parent OpenAPI spec to `openapi.json`
+    /// in the current directory and exit.
+    #[clap(long)]
+    generate_openapi: bool,
+
+    /// Download (or update) the named area config package and exit.
+    /// The area must be listed in `areas.toml`.
+    #[clap(long, value_name = "AREA")]
+    download_area: Option<String>,
+
+    /// List areas available in all configured manifest sources and exit.
+    #[clap(long)]
+    list_areas: bool,
 }
 
 fn get_target() -> &'static str {
@@ -81,7 +111,76 @@ fn update() -> ApplicationResult<bool> {
 }
 
 async fn run(cli: Cli) -> ApplicationResult<()> {
-    let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
+    // ── --generate-openapi ────────────────────────────────────────────────────
+    if cli.generate_openapi {
+        let json = api_server::generate_openapi_json();
+        std::fs::write("openapi.json", &json)?;
+        info!("OpenAPI spec written to openapi.json");
+        println!("openapi.json written ({} bytes)", json.len());
+        return Ok(());
+    }
+
+    let config = Arc::new(
+        ESConfig::find_euroscope_config_folder(cli.clean_config, cli.profile.as_deref())
+            .unwrap_or_log(),
+    );
+
+    let config_dir = config::es_runway_selector_project_dir()
+        .config_dir()
+        .to_path_buf();
+    let area_entries = load_area_entries(&config_dir);
+
+    // ── --list-areas ──────────────────────────────────────────────────────────
+    if cli.list_areas {
+        use area_config::AreaSource;
+        let manifest_urls: Vec<&str> = area_entries
+            .iter()
+            .filter_map(|e| {
+                if let AreaSource::Manifest { url, .. } = &e.source {
+                    Some(url.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if manifest_urls.is_empty() {
+            println!("No manifest sources configured in areas.toml.");
+        }
+        for url in manifest_urls {
+            list_manifest_areas(url).await?;
+        }
+        println!("\nLocal entries in areas.toml:");
+        for entry in &area_entries {
+            println!("  {}", entry.name);
+        }
+        return Ok(());
+    }
+
+    // ── --download-area ───────────────────────────────────────────────────────
+    if let Some(area_name) = &cli.download_area {
+        let entry = area_entries
+            .iter()
+            .find(|e| e.name.eq_ignore_ascii_case(area_name))
+            .ok_or_else(|| {
+                error::ApplicationError::AreaConfigError(format!(
+                    "Area '{area_name}' not found in areas.toml"
+                ))
+            })?;
+        download_area(entry, &config_dir).await?;
+        println!("Area '{}' downloaded successfully.", entry.name);
+        return Ok(());
+    }
+
+    // ── Normal runway selection run ───────────────────────────────────────────
+
+    // Start our helper API server first so plugins can call back to us.
+    let parent_port = api_server::start(config.api_port()).await?;
+
+    // Start configured plugins.
+    let plugin_configs = config.active_plugin_configs();
+    let plugins = PluginManager::start(&plugin_configs, parent_port).await?;
+
+    // Launch non-EuroScope apps (TrackAudio, vacs, etc.) immediately.
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
         let handles = config_task1.run_apps(false).await;
@@ -89,16 +188,22 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
             handle.await.unwrap();
         }
     });
+
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
     airports.load_airports_from_sector_file(&mut sct_file, &config)?;
     airports.add_metars(&config).await;
-    airports.read_atis_and_apply_runways().await.unwrap();
-    airports.select_runway_in_use(&config);
+    airports
+        .read_atis_and_apply_runways(&plugins)
+        .await
+        .unwrap();
+    airports.select_runway_in_use(&config, &plugins).await;
     airports.sort();
     config
         .write_runways_to_euroscope_rwy_file(&airports)
         .unwrap_or_log();
+
+    // Now launch EuroScope.
     let task2 = tokio::spawn(async move {
         let handles = config.run_apps(true).await;
         for handle in handles {
@@ -132,13 +237,9 @@ fn setup_logging(cli: &Cli) -> std::io::Result<(PathBuf, WorkerGuard)> {
     let file_path = match &cli.previous_log_path {
         Some(path) => path.to_path_buf(),
         None => {
-            // Clean up log files older than 14 days
             cleanup_old_logs(&log_dir, 14)?;
-
-            // Timestamp in Zulu (UTC)
             let now_utc = Zoned::now().with_time_zone(TimeZone::UTC);
             let ts_str = now_utc.strftime("%Y%m%d-%H%M%SZ");
-
             let file_name = format!("es_runway_selector-{ts_str}.json");
             log_dir.join(file_name)
         }
@@ -147,14 +248,11 @@ fn setup_logging(cli: &Cli) -> std::io::Result<(PathBuf, WorkerGuard)> {
     let file = std::fs::File::create(&file_path)?;
     let (non_blocking, guard) = tracing_appender::non_blocking(file);
 
-    // Stdout logger controlled by RUST_LOG
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_thread_ids(true)
         .with_thread_names(true)
-        // filter MUST be last so we still have access to the fmt::Layer methods above
         .with_filter(EnvFilter::from_default_env());
 
-    // JSON logger to timestamped file, has its own filter
     let json_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_writer(non_blocking)
@@ -162,7 +260,6 @@ fn setup_logging(cli: &Cli) -> std::io::Result<(PathBuf, WorkerGuard)> {
         .with_line_number(true)
         .with_thread_ids(true)
         .with_thread_names(true)
-        // again, filter last
         .with_filter(EnvFilter::new(
             cli.log_level
                 .as_deref()
@@ -187,11 +284,9 @@ fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-
         if !path.is_file() {
             continue;
         }
-
         let metadata = entry.metadata()?;
         if let Ok(modified) = metadata.modified()
             && modified < cutoff

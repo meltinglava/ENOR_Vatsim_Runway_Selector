@@ -30,4 +30,8 @@ pub(crate) enum ApplicationError {
     AsyncJoinError(#[from] JoinError),
     #[error("VatsimUtil error: {0}")]
     VatsimUtilError(#[from] vatsim_utils::errors::VatsimUtilError),
+    #[error("Plugin startup error: {0}")]
+    PluginStartupError(String),
+    #[error("Area config error: {0}")]
+    AreaConfigError(String),
 }

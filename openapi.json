@@ -1,0 +1,556 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ES Runway Selector – Plugin & Parent API",
+    "description": "\n## Plugin API (implementors must expose these endpoints)\n\n| Method | Path | Description |\n|--------|------|-------------|\n| GET | `/health` | Health check – return 200 when ready |\n| GET | `/airports` | List ICAO codes this plugin handles |\n| POST | `/atis` | Parse ATIS texts and return runway assignments |\n| POST | `/runways` | Select active runways from METAR data |\n\n## Parent API (helpers exposed by `es_runway_selector`)\n\n| Method | Path | Description |\n|--------|------|-------------|\n| GET | `/health` | Health check |\n| POST | `/parse-atis` | Parse ATIS using the built-in regex parser |\n| POST | `/parse-metar` | Parse a raw METAR string |\n\nThe parent port is provided to plugins via the `ES_RUNWAY_SELECTOR_PORT` environment variable.\nThe plugin's own port is provided via `ES_RUNWAY_SELECTOR_PLUGIN_PORT`.\n",
+    "contact": {
+      "name": "meltinglava"
+    },
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "AirportInfo": {
+        "type": "object",
+        "required": [
+          "icao",
+          "runways"
+        ],
+        "properties": {
+          "icao": {
+            "type": "string"
+          },
+          "runways": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhysicalRunway"
+            }
+          }
+        }
+      },
+      "AirportRunwayAssignment": {
+        "type": "object",
+        "required": [
+          "airport_icao",
+          "assignments"
+        ],
+        "properties": {
+          "airport_icao": {
+            "type": "string"
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunwayAssignment"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectionTag"
+            },
+            "description": "Tags explaining and/or qualifying this selection. Empty when none apply."
+          }
+        }
+      },
+      "AtisEntry": {
+        "type": "object",
+        "required": [
+          "airport_icao",
+          "atis_text"
+        ],
+        "properties": {
+          "airport_icao": {
+            "type": "string"
+          },
+          "atis_text": {
+            "type": "string"
+          },
+          "information_letter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AtisRequest": {
+        "type": "object",
+        "description": "Body sent to the plugin's `POST /atis` endpoint.",
+        "required": [
+          "atis_entries",
+          "airports"
+        ],
+        "properties": {
+          "airports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirportInfo"
+            }
+          },
+          "atis_entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AtisEntry"
+            }
+          }
+        }
+      },
+      "AtisResponse": {
+        "type": "object",
+        "description": "Body returned from the plugin's `POST /atis` endpoint.",
+        "required": [
+          "airports"
+        ],
+        "properties": {
+          "airports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirportRunwayAssignment"
+            }
+          }
+        }
+      },
+      "CloudCoverage": {
+        "type": "string",
+        "enum": [
+          "few",
+          "scattered",
+          "broken",
+          "overcast",
+          "unknown"
+        ]
+      },
+      "CloudLayer": {
+        "type": "object",
+        "required": [
+          "coverage",
+          "is_cumulonimbus"
+        ],
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/CloudCoverage"
+          },
+          "height_ft": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Cloud base in feet. `None` when the height field was `///`.",
+            "minimum": 0
+          },
+          "is_cumulonimbus": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MetarData": {
+        "type": "object",
+        "description": "Structured METAR data ready for plugin consumption.\n\nAlways includes `raw` so plugins can do their own parsing if needed.",
+        "required": [
+          "raw",
+          "icao",
+          "clouds",
+          "rvr_reported",
+          "present_weather"
+        ],
+        "properties": {
+          "clouds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudLayer"
+            }
+          },
+          "dew_point_c": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Dew point in degrees Celsius."
+          },
+          "icao": {
+            "type": "string"
+          },
+          "present_weather": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Present weather codes, e.g. `[\"-SN\", \"+TSRA\", \"FG\"]`."
+          },
+          "qnh_hpa": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "QNH in hPa.",
+            "minimum": 0
+          },
+          "raw": {
+            "type": "string"
+          },
+          "rvr_reported": {
+            "type": "boolean"
+          },
+          "temp_c": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Temperature in degrees Celsius."
+          },
+          "vertical_visibility_ft": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Vertical visibility in hundreds of feet, if reported.",
+            "minimum": 0
+          },
+          "visibility_m": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Prevailing visibility in metres. `None` for CAVOK or `////`.",
+            "minimum": 0
+          },
+          "wind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WindData"
+              }
+            ]
+          }
+        }
+      },
+      "ParseAtisRequest": {
+        "type": "object",
+        "description": "Request body for the parent's `POST /parse-atis` helper.",
+        "required": [
+          "atis_text"
+        ],
+        "properties": {
+          "atis_text": {
+            "type": "string"
+          }
+        }
+      },
+      "ParseAtisResponse": {
+        "type": "object",
+        "description": "Response from the parent's `POST /parse-atis` helper.",
+        "required": [
+          "assignments"
+        ],
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunwayAssignment"
+            }
+          }
+        }
+      },
+      "ParseMetarRequest": {
+        "type": "object",
+        "description": "Request body for the parent's `POST /parse-metar` helper.",
+        "required": [
+          "raw_metar"
+        ],
+        "properties": {
+          "raw_metar": {
+            "type": "string"
+          }
+        }
+      },
+      "ParseMetarResponse": {
+        "type": "object",
+        "description": "Response from the parent's `POST /parse-metar` helper.",
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metar": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetarData"
+              }
+            ]
+          }
+        }
+      },
+      "PhysicalRunway": {
+        "type": "object",
+        "description": "A physical runway strip with a mandatory primary direction and an optional reciprocal.\n\nA normal two-way runway has both fields; a one-way or approach-only runway has only `primary`.",
+        "required": [
+          "primary"
+        ],
+        "properties": {
+          "primary": {
+            "$ref": "#/components/schemas/RunwayInfo"
+          },
+          "reciprocal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunwayInfo"
+              }
+            ]
+          }
+        }
+      },
+      "PluginAirportsResponse": {
+        "type": "object",
+        "description": "Response from the plugin's `GET /airports` endpoint.\n\nLists the ICAO codes this plugin claims to handle.\nOnly airports in this list are routed to the plugin.",
+        "required": [
+          "airports"
+        ],
+        "properties": {
+          "airports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RunwayAssignment": {
+        "type": "object",
+        "required": [
+          "runway_id",
+          "runway_use"
+        ],
+        "properties": {
+          "runway_id": {
+            "type": "string"
+          },
+          "runway_use": {
+            "$ref": "#/components/schemas/RunwayUse"
+          }
+        }
+      },
+      "RunwayInfo": {
+        "type": "object",
+        "required": [
+          "identifier",
+          "degrees"
+        ],
+        "properties": {
+          "degrees": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "identifier": {
+            "type": "string"
+          }
+        }
+      },
+      "RunwaySelectionRequest": {
+        "type": "object",
+        "description": "Body sent to the plugin's `POST /runways` endpoint.",
+        "required": [
+          "airport"
+        ],
+        "properties": {
+          "airport": {
+            "$ref": "#/components/schemas/AirportInfo"
+          },
+          "metar": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetarData"
+              }
+            ]
+          }
+        }
+      },
+      "RunwaySelectionResponse": {
+        "type": "object",
+        "description": "Body returned from the plugin's `POST /runways` endpoint.",
+        "required": [
+          "runways"
+        ],
+        "properties": {
+          "runways": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunwayAssignment"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectionTag"
+            },
+            "description": "Tags explaining and/or qualifying this selection. Empty when none apply."
+          }
+        }
+      },
+      "RunwayUse": {
+        "type": "string",
+        "enum": [
+          "departing",
+          "arriving",
+          "both"
+        ]
+      },
+      "SelectionTag": {
+        "type": "object",
+        "description": "A tag attached to a runway selection, transmitted in plugin responses.\n\n`conflict = false` → the tag *explains* the selection (a reason).\n`conflict = true`  → the tag marks a *negative factor that was accepted*\nagainst the chosen runway (e.g. tailwind, low visibility accepted with\na tailwind).  When conflict tags are present alongside reason tags the\nreport highlights the combination as a compromise.",
+        "required": [
+          "id",
+          "conflict",
+          "symbol",
+          "label"
+        ],
+        "properties": {
+          "conflict": {
+            "type": "boolean",
+            "description": "Whether this tag represents an accepted negative factor."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier; matches a [`Tag::id`] in the registry."
+          },
+          "label": {
+            "type": "string",
+            "description": "Full label used as a tooltip (populated from [`Tag`])."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Unicode symbol / emoji shown in the report (populated from [`Tag`])."
+          }
+        }
+      },
+      "VariableWind": {
+        "type": "object",
+        "required": [
+          "from_degrees",
+          "to_degrees"
+        ],
+        "properties": {
+          "from_degrees": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "to_degrees": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "WindData": {
+        "type": "object",
+        "required": [
+          "direction",
+          "speed_kt"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/WindDirection"
+          },
+          "gust_kt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Gust speed in knots, if reported."
+          },
+          "speed_kt": {
+            "type": "number",
+            "format": "double",
+            "description": "Wind speed in knots."
+          },
+          "variable_sector": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VariableWind",
+                "description": "Variable wind sector, e.g. `250V330`."
+              }
+            ]
+          }
+        }
+      },
+      "WindDirection": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "variable"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "degrees",
+              "type"
+            ],
+            "properties": {
+              "degrees": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "heading"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "plugin",
+      "description": "Endpoints a plugin must implement"
+    },
+    {
+      "name": "parent",
+      "description": "Helper endpoints exposed by es_runway_selector"
+    }
+  ]
+}

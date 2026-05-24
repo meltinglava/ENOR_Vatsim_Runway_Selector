@@ -204,11 +204,31 @@
          col.col-wind-x-left { width: 18px; }
          col.col-wind-x-val { width: 3ch; }
          col.col-wind-x-right { width: 18px; }
+         col.col-tags  { width: 5ch; }
          col.col-metar { width: auto; }
 
          th.comp-width {
              text-align: center;
              width: 13ch;
+         }
+
+         .tags {
+             vertical-align: middle !important;
+             white-space: nowrap;
+             padding: 2px 4px !important;
+             text-align: center;
+         }
+
+         .tag {
+             display: inline-block;
+             font-size: 14px;
+             margin: 0 1px;
+             cursor: default;
+             line-height: 1;
+         }
+
+         .tag-conflict {
+             filter: drop-shadow(0 0 4px rgba(255, 122, 122, 0.9));
          }
         </style>
     </head>
@@ -253,6 +273,7 @@
                         <col class="col-wind-x-left">
                         <col class="col-wind-x-val">
                         <col class="col-wind-x-right">
+                        <col class="col-tags">
                         <col class="col-metar">
                     </colgroup>
                     <thead>
@@ -260,6 +281,7 @@
                             <th>ICAO</th>
                             <th>Runways</th>
                             <th colspan="5" class="comp-width">Components</th>
+                            <th></th>
                             <th>METAR</th>
                         </tr>
                     </thead>
@@ -309,6 +331,7 @@
                                 {% endif %}
                             </td>
                             {% if loop.first %}
+                            <td class="tags" rowspan="{{ a.line_count }}">{% for tag in a.tags %}<span class="tag {% if tag.conflict %}tag-conflict{% endif %}" title="{{ tag.label }}">{{ tag.symbol }}</span>{% endfor %}</td>
                             <td class="metar" rowspan="{{ a.line_count }}">{{ a.metar }}</td>
                             {% endif %}
                         </tr>

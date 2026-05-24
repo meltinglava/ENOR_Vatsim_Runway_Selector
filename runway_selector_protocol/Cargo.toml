@@ -1,0 +1,13 @@
+[package]
+name = "runway_selector_protocol"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP plugin protocol types for es_runway_selector"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { version = "5", features = ["macros"] }

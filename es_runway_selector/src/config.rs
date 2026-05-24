@@ -34,64 +34,343 @@ pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
         .expect("Failed to get project directories")
 }
 
-#[derive(Debug)]
-pub(crate) struct ESConfig {
-    euroscope_config_folder: PathBuf,
-    sector_file_prefix: String,
-    #[allow(dead_code)] // used in tests
-    config_file_path: PathBuf,
-    config: Configurable,
-    app_launchers: IndexSet<AppLauncher>,
+// ─── Plugin config ────────────────────────────────────────────────────────────
+
+/// Configuration for one external area plugin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[skip_serializing_none]
+pub(crate) struct PluginConfig {
+    /// Unique name referenced from profiles.
+    pub name: String,
+    /// Command to run (e.g. `"es_runway_selector_area_enor"` or `"python main.py"`).
+    pub command: String,
+    /// Optional mise runtime spec (e.g. `"python@3.11"`).
+    /// When set the plugin is launched as `mise exec <runtime> -- <command>`.
+    pub runtime: Option<String>,
+    /// Working directory for the plugin process.
+    pub working_dir: Option<PathBuf>,
 }
+
+fn load_plugins(config_dir: &Path) -> Vec<PluginConfig> {
+    let path = config_dir.join("plugins.toml");
+    if !path.exists() {
+        return Vec::new();
+    }
+    let raw = fs::read_to_string(&path).unwrap_or_log();
+    let value: toml::Value = toml::from_str(&raw).unwrap_or_log();
+    let Some(toml::Value::Array(arr)) = value.get("plugins") else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|v| toml::Value::try_into(v.clone()).ok())
+        .collect()
+}
+
+// ─── Profile config ───────────────────────────────────────────────────────────
+
+/// One named profile (sector file + per-FIR tuning + plugin references).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[skip_serializing_none]
+pub(crate) struct ProfileConfig {
+    pub name: String,
+    /// Filter for sector-file auto-detection. Defaults to `"ENOR"`.
+    pub sector_file_prefix: Option<String>,
+    /// Explicit folder containing the `.sct` / `.rwy` files.
+    pub sector_file_dir: Option<PathBuf>,
+    /// Airport ICAO codes to skip entirely.
+    #[serde(default)]
+    pub ignore_airports: IndexSet<String>,
+    /// Default runway number per airport (e.g. `ENGM = 1` → runway "01").
+    #[serde(default)]
+    pub default_runways: IndexMap<String, u8>,
+    /// Names of plugins (from `plugins.toml`) active for this profile.
+    #[serde(default)]
+    pub plugins: Vec<String>,
+    /// Optional reference to a downloaded area config folder name.
+    pub area: Option<String>,
+}
+
+fn load_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
+    let path = config_dir.join("profiles.toml");
+    if !path.exists() {
+        return Vec::new();
+    }
+    let raw = fs::read_to_string(&path).unwrap_or_log();
+    let value: toml::Value = toml::from_str(&raw).unwrap_or_log();
+    let Some(toml::Value::Array(arr)) = value.get("profiles") else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|v| toml::Value::try_into(v.clone()).ok())
+        .collect()
+}
+
+// ─── Area-folder config ───────────────────────────────────────────────────────
+
+/// Shared settings for an area, loaded from `config/<AREA>/area.toml`.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[skip_serializing_none]
+struct AreaFileConfig {
+    sector_file_prefix: Option<String>,
+    sector_file_dir: Option<PathBuf>,
+    #[serde(default)]
+    ignore_airports: IndexSet<String>,
+    #[serde(default)]
+    default_runways: IndexMap<String, u8>,
+    #[serde(default)]
+    plugins: Vec<String>,
+}
+
+/// One named profile override, from `[[profiles]]` in `config/<AREA>/profiles.toml`.
+#[derive(Debug, Clone, Deserialize)]
+struct AreaProfileEntry {
+    name: String,
+    /// Additional plugins appended to the area's plugin list.
+    #[serde(default)]
+    plugins: Vec<String>,
+    /// Additional airports to ignore (merged with the area list).
+    #[serde(default)]
+    ignore_airports: IndexSet<String>,
+    /// Per-profile default runway overrides (override area defaults).
+    #[serde(default)]
+    default_runways: IndexMap<String, u8>,
+    /// Override the sector file directory for this profile only.
+    sector_file_dir: Option<PathBuf>,
+}
+
+/// Returns `true` if `config_dir` contains at least one area subdirectory
+/// (a subdirectory that has an `area.toml` file inside it).
+fn has_area_directories(config_dir: &Path) -> bool {
+    fs::read_dir(config_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().is_dir() && e.path().join("area.toml").exists())
+}
+
+/// Scan all area subdirectories under `config_dir` and build a flat list of
+/// `ProfileConfig` values.
+///
+/// - An area with no `profiles.toml` → one profile named after the area folder.
+/// - An area with `profiles.toml` → one profile per entry, named `"<AREA>/<profile>"`.
+fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
+    let mut profiles = Vec::new();
+
+    let Ok(entries) = fs::read_dir(config_dir) else {
+        return profiles;
+    };
+
+    let mut area_dirs: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir() && e.path().join("area.toml").exists())
+        .collect();
+    area_dirs.sort_by_key(|e| e.file_name());
+
+    for dir_entry in area_dirs {
+        let area_dir = dir_entry.path();
+        let area_name = dir_entry.file_name().to_string_lossy().to_string();
+
+        let area_cfg: AreaFileConfig = fs::read_to_string(area_dir.join("area.toml"))
+            .ok()
+            .and_then(|raw| toml::from_str(&raw).ok())
+            .unwrap_or_default();
+
+        let profiles_path = area_dir.join("profiles.toml");
+        if profiles_path.exists() {
+            // Multi-profile area: each entry gets a qualified name "<AREA>/<profile>".
+            let area_profiles: Vec<AreaProfileEntry> = fs::read_to_string(&profiles_path)
+                .ok()
+                .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+                .and_then(|v| v.get("profiles").cloned())
+                .and_then(|arr| toml::Value::try_into(arr).ok())
+                .unwrap_or_default();
+
+            for entry in area_profiles {
+                let sector_file_dir = entry
+                    .sector_file_dir
+                    .or_else(|| area_cfg.sector_file_dir.clone());
+
+                let mut plugins = area_cfg.plugins.clone();
+                for p in &entry.plugins {
+                    if !plugins.contains(p) {
+                        plugins.push(p.clone());
+                    }
+                }
+
+                let mut ignore_airports = area_cfg.ignore_airports.clone();
+                ignore_airports.extend(entry.ignore_airports);
+
+                // Profile overrides take precedence over area defaults.
+                let mut default_runways = area_cfg.default_runways.clone();
+                for (icao, rwy) in entry.default_runways {
+                    default_runways.insert(icao, rwy);
+                }
+
+                profiles.push(ProfileConfig {
+                    name: format!("{}/{}", area_name, entry.name),
+                    sector_file_prefix: area_cfg.sector_file_prefix.clone(),
+                    sector_file_dir,
+                    ignore_airports,
+                    default_runways,
+                    plugins,
+                    area: None,
+                });
+            }
+        } else {
+            // Single-profile area: profile is named after the area folder.
+            profiles.push(ProfileConfig {
+                name: area_name,
+                sector_file_prefix: area_cfg.sector_file_prefix,
+                sector_file_dir: area_cfg.sector_file_dir,
+                ignore_airports: area_cfg.ignore_airports,
+                default_runways: area_cfg.default_runways,
+                plugins: area_cfg.plugins,
+                area: None,
+            });
+        }
+    }
+
+    profiles
+}
+
+// ─── Global (per-installation) config ─────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 #[skip_serializing_none]
-struct Configurable {
+struct GlobalConfigurable {
+    // Legacy flat-profile fields – used when profiles.toml is absent.
+    #[serde(default)]
     ignore_airports: IndexSet<String>,
+    #[serde(default)]
     default_runways: IndexMap<String, u8>,
     euroscope_config_folder: Option<PathBuf>,
+
     euroscope_executable_path: Option<IndexMap<String, PathBuf>>,
     es_main_window_delay_ms: Option<u64>,
+
+    /// Port for the parent HTTP API server. `0` picks a random free port.
+    #[serde(default = "default_api_port")]
+    pub api_port: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
-struct AppLauncher {
-    name: String,
-    args: Vec<String>,
-    prf: Option<PathBuf>,
+fn default_api_port() -> u16 {
+    0
 }
 
-impl Configurable {
+impl GlobalConfigurable {
     fn find_from_config(&self) -> Option<(PathBuf, String)> {
         let path = self.euroscope_config_folder.as_ref()?;
         search_for_sct_with_possibilities(&[path])
     }
 }
 
+// ─── App launchers ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
+pub(crate) struct AppLauncher {
+    pub name: String,
+    pub args: Vec<String>,
+    pub prf: Option<PathBuf>,
+}
+
+// ─── ESConfig ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) struct ESConfig {
+    euroscope_config_folder: PathBuf,
+    sector_file_prefix: String,
+    #[allow(dead_code)]
+    config_file_path: PathBuf,
+    global: GlobalConfigurable,
+    profile: ProfileConfig,
+    pub(crate) all_plugins: Vec<PluginConfig>,
+    app_launchers: IndexSet<AppLauncher>,
+}
+
 impl ESConfig {
-    pub fn find_euroscope_config_folder(clean_config: bool) -> Option<Self> {
-        let (mut config, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
-        let (sct_path, sector_file_prefix) = search_for_newest_sct_file()
-            .or_else(|| config.find_from_config())
-            .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
+    pub fn find_euroscope_config_folder(
+        clean_config: bool,
+        requested_profile: Option<&str>,
+    ) -> Option<Self> {
+        let (mut global, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
+        let config_dir = config_file_path
+            .parent()
+            .expect("config file has no parent")
+            .to_path_buf();
+
+        let all_plugins = load_plugins(&config_dir);
+
+        // On fresh installs, auto-create an area folder for each sector file found.
+        if !has_area_directories(&config_dir) && !config_dir.join("profiles.toml").exists() {
+            auto_create_area_configs(&config_dir);
+        }
+
+        let profiles = if has_area_directories(&config_dir) {
+            load_area_based_profiles(&config_dir)
+        } else {
+            load_profiles(&config_dir)
+        };
+
+        let profile = if profiles.is_empty() {
+            // No profiles.toml – synthesise one from the legacy flat config.
+            ProfileConfig {
+                name: "default".to_string(),
+                sector_file_prefix: None,
+                sector_file_dir: global.euroscope_config_folder.clone(),
+                ignore_airports: global.ignore_airports.clone(),
+                default_runways: global.default_runways.clone(),
+                plugins: Vec::new(),
+                area: None,
+            }
+        } else {
+            select_profile(profiles, requested_profile)?
+        };
+
+        // Merge in downloaded area config if an `area` is referenced.
+        let profile = merge_area_config(profile, &config_dir);
+
+        // Sector file discovery: profile's explicit dir > auto search (prefix filter).
+        let prefix = profile
+            .sector_file_prefix
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SECTOR_FILE_PREFIX.to_string());
+
+        let (sct_path, sector_file_prefix) = profile
+            .sector_file_dir
+            .as_ref()
+            .and_then(|d| search_for_sct_with_possibilities(&[d]))
+            .or_else(|| search_for_newest_sct_file_with_prefix(&prefix))
+            .or_else(|| global.find_from_config())
+            .or_else(|| query_user_euroscope_config_folder(&mut global, &config_file_path))?;
 
         let app_launchers = get_app_launchers(&config_file_path);
 
         Some(Self {
             euroscope_config_folder: sct_path,
             sector_file_prefix,
-            config,
+            global,
+            profile,
+            all_plugins,
             config_file_path,
             app_launchers,
         })
     }
 
     pub fn get_ignore_airports(&self) -> &IndexSet<String> {
-        &self.config.ignore_airports
+        &self.profile.ignore_airports
     }
 
     pub fn get_default_runways(&self) -> &IndexMap<String, u8> {
-        &self.config.default_runways
+        &self.profile.default_runways
+    }
+
+    /// Plugins active for the current profile.
+    pub fn active_plugin_configs(&self) -> Vec<&PluginConfig> {
+        self.profile
+            .plugins
+            .iter()
+            .filter_map(|name| self.all_plugins.iter().find(|p| &p.name == name))
+            .collect()
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {
@@ -102,6 +381,10 @@ impl ESConfig {
     pub fn get_rwy_file_path(&self) -> PathBuf {
         self.euroscope_config_folder
             .join(format!("{}.rwy", self.sector_file_prefix))
+    }
+
+    pub fn api_port(&self) -> u16 {
+        self.global.api_port
     }
 
     pub fn write_runways_to_euroscope_rwy_file(
@@ -136,7 +419,7 @@ impl ESConfig {
                 }
                 let app = app.clone();
                 let exe_path = self
-                    .config
+                    .global
                     .euroscope_executable_path
                     .clone()
                     .unwrap_or_default()
@@ -161,14 +444,11 @@ impl ESConfig {
                     false
                 };
                 let sleep_duration =
-                    Duration::from_millis(self.config.es_main_window_delay_ms.unwrap_or(2000));
+                    Duration::from_millis(self.global.es_main_window_delay_ms.unwrap_or(2000));
                 handles.push(tokio::spawn(async move {
-                    // Give Euroscope some time to ensure that the first windows
-                    // becomes the main one.
                     if pre_wait {
                         sleep(sleep_duration).await;
                     }
-
                     app.run(&exe_path, prf_path).await;
                 }));
             }
@@ -177,10 +457,128 @@ impl ESConfig {
     }
 }
 
+fn select_profile(
+    mut profiles: Vec<ProfileConfig>,
+    requested: Option<&str>,
+) -> Option<ProfileConfig> {
+    if let Some(name) = requested {
+        // Exact match first.
+        if let Some(pos) = profiles
+            .iter()
+            .position(|p| p.name.eq_ignore_ascii_case(name))
+        {
+            let p = profiles.swap_remove(pos);
+            debug!(profile = %p.name, "Using requested profile");
+            return Some(p);
+        }
+        // Area-prefix match: "ENOR" matches "ENOR/TWR", "ENOR/APP", etc.
+        let prefix_lc = format!("{}/", name.to_ascii_lowercase());
+        let mut area_matches: Vec<ProfileConfig> = profiles
+            .into_iter()
+            .filter(|p| p.name.to_ascii_lowercase().starts_with(&prefix_lc))
+            .collect();
+        if area_matches.is_empty() {
+            warn!(profile = %name, "Requested profile not found");
+            return None;
+        }
+        if area_matches.len() == 1 {
+            let p = area_matches.pop().unwrap();
+            debug!(profile = %p.name, "Auto-selected the only profile in requested area");
+            return Some(p);
+        }
+        return select_from_multiple(area_matches);
+    }
+
+    if profiles.len() == 1 {
+        let p = profiles.pop().unwrap();
+        debug!(profile = %p.name, "Auto-selected the only configured profile");
+        return Some(p);
+    }
+
+    select_from_multiple(profiles)
+}
+
+fn select_from_multiple(profiles: Vec<ProfileConfig>) -> Option<ProfileConfig> {
+    // Multiple profiles and none explicitly requested: prompt (non-musl) or pick first.
+    #[cfg(not(target_env = "musl"))]
+    {
+        let names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
+        let selection = rfd::MessageDialog::new()
+            .set_title("Select profile")
+            .set_description(format!(
+                "Multiple profiles available: {}\nEnter a profile name or press Cancel for the first.",
+                names.join(", ")
+            ))
+            .set_buttons(rfd::MessageButtons::OkCancel)
+            .show();
+
+        if !matches!(selection, rfd::MessageDialogResult::Ok) {
+            return profiles.into_iter().next();
+        }
+    }
+
+    profiles.into_iter().next()
+}
+
+/// Merge area config from `~/.config/es_runway_selector/areas/<name>/` into the profile.
+fn merge_area_config(mut profile: ProfileConfig, config_dir: &Path) -> ProfileConfig {
+    let area_name = match &profile.area {
+        Some(a) => a.clone(),
+        None => return profile,
+    };
+    let area_dir = config_dir.join("areas").join(&area_name);
+    if !area_dir.exists() {
+        warn!(area = %area_name, "Referenced area config directory not found; run --download-area to install it");
+        return profile;
+    }
+
+    // Merge area's config.toml (ignore_airports + default_runways).
+    let area_config_path = area_dir.join("config.toml");
+    if area_config_path.exists() {
+        #[derive(Deserialize, Default)]
+        struct AreaConfig {
+            #[serde(default)]
+            ignore_airports: IndexSet<String>,
+            #[serde(default)]
+            default_runways: IndexMap<String, u8>,
+        }
+        if let Ok(raw) = fs::read_to_string(&area_config_path)
+            && let Ok(ac) = toml::from_str::<AreaConfig>(&raw)
+        {
+            // Profile settings take precedence over area defaults.
+            for icao in ac.ignore_airports {
+                profile.ignore_airports.insert(icao);
+            }
+            for (icao, rwy) in ac.default_runways {
+                profile.default_runways.entry(icao).or_insert(rwy);
+            }
+        }
+    }
+
+    // Merge area's plugins.toml plugin *names* into the profile.
+    let area_plugins_path = area_dir.join("plugins.toml");
+    if area_plugins_path.exists()
+        && let Ok(raw) = fs::read_to_string(&area_plugins_path)
+        && let Ok(value) = toml::from_str::<toml::Value>(&raw)
+        && let Some(toml::Value::Array(arr)) = value.get("plugins")
+    {
+        for v in arr {
+            if let Some(name) = v.get("name").and_then(|n| n.as_str())
+                && !profile.plugins.contains(&name.to_string())
+            {
+                profile.plugins.push(name.to_string());
+            }
+        }
+    }
+
+    profile
+}
+
+// ─── Process helpers ──────────────────────────────────────────────────────────
+
 fn is_process_running(name: &str) -> bool {
     let mut sys = System::new_all();
     sys.refresh_processes(ProcessesToUpdate::All, true);
-
     let lower = name.to_lowercase();
     sys.processes_by_name(OsStr::new(name))
         .chain(sys.processes_by_name(OsStr::new(&lower)))
@@ -218,7 +616,6 @@ fn find_exe_path(name: &str) -> Option<PathBuf> {
 }
 
 impl AppLauncher {
-    /// Launch the application detached from the current process
     async fn run(&self, exe_path: &Path, prf_folder: PathBuf) {
         #[cfg(target_os = "windows")]
         let mut command = {
@@ -229,15 +626,10 @@ impl AppLauncher {
                 .unwrap_or(false);
 
             if is_lnk {
-                // cmd.exe /c start "" "C:\path\to\shortcut.lnk" [args...]
                 let mut cmd = Command::new("cmd");
-                cmd.arg("/c")
-                    .arg("start")
-                    .arg("") // window title placeholder for `start`
-                    .arg(exe_path); // the .lnk (or any shell-handled file)
+                cmd.arg("/c").arg("start").arg("").arg(exe_path);
                 cmd
             } else {
-                // Normal executable: launch directly
                 Command::new(exe_path)
             }
         };
@@ -245,11 +637,9 @@ impl AppLauncher {
         #[cfg(not(target_os = "windows"))]
         let mut command = Command::new(exe_path);
 
-        // Common args
         for arg in &self.args {
             command.arg(arg);
         }
-
         if let Some(prf) = &self.prf {
             command.arg((prf_folder.join(prf)).to_string_lossy().to_string());
         }
@@ -271,7 +661,6 @@ impl AppLauncher {
         }
 
         debug!("Starting application: {:?}", command);
-
         if let Err(e) = command.spawn() {
             warn!(
                 "Failed to launch application {}: {:?}",
@@ -297,9 +686,7 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
     }
 
     let raw_app_launchers_file = fs::read_to_string(&app_launchers_file_path).unwrap_or_log();
-
     let toml_file: toml::Value = toml::from_str(&raw_app_launchers_file).unwrap_or_log();
-
     let toml::Value::Table(map) = &toml_file else {
         warn!(
             "App launchers config file is not a table, it is: {:?}",
@@ -307,7 +694,6 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
         );
         return IndexSet::new();
     };
-
     let Some(array) = map.get("executable") else {
         warn!(
             "App launchers config file is not an array, it is: {:?}",
@@ -315,7 +701,6 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
         );
         return IndexSet::new();
     };
-
     let toml::Value::Array(executables) = array else {
         warn!(
             "App launchers config file 'executable' is not an array, it is: {:?}",
@@ -325,13 +710,11 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
     };
 
     let mut app_launchers = IndexSet::new();
-
     for exe in executables {
         let toml::Value::Table(exe_table) = exe else {
             warn!("App launcher entry is not a table, it is: {:?}", exe);
             continue;
         };
-
         let name = match exe_table.get("name") {
             Some(toml::Value::String(s)) => s.clone(),
             _ => {
@@ -342,7 +725,6 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
                 continue;
             }
         };
-
         let args = match exe_table.get("args") {
             Some(toml::Value::Array(arr)) => arr
                 .iter()
@@ -356,12 +738,10 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
                 .collect(),
             _ => Vec::new(),
         };
-
         let prf = match exe_table.get("prf") {
             Some(toml::Value::String(s)) => Some(PathBuf::from(s)),
             _ => None,
         };
-
         app_launchers.insert(AppLauncher { name, args, prf });
     }
 
@@ -369,17 +749,17 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
         "Loaded app launchers from {:?}: {:?}",
         app_launchers_file_path, app_launchers
     );
-
     app_launchers
 }
 
+// ─── Sector file discovery ────────────────────────────────────────────────────
+
 #[cfg(not(target_env = "musl"))]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
-    config: &mut Configurable,
+    config: &mut GlobalConfigurable,
     config_file_path: &P,
 ) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new()?;
-
     let possibility = rfd::FileDialog::new()
         .set_title("Select Euroscope sector file folder (contains .sct/.rwy)")
         .set_directory(bd.config_dir())
@@ -395,17 +775,16 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
 
 #[cfg(target_env = "musl")]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
-    _config: &mut Configurable,
+    _config: &mut GlobalConfigurable,
     _config_file_path: &P,
 ) -> Option<(PathBuf, String)> {
     warn!("Running in a musl environment, cannot query user for Euroscope config folder.");
     None
 }
 
-#[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
+#[allow(unstable_name_collisions)]
 pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
     let reader = BufReader::new(rwy_file);
-
     reader
         .lines()
         .take_while(|l| match l {
@@ -416,7 +795,7 @@ pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
         .collect::<io::Result<String>>()
 }
 
-fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), ConfigError> {
+fn setup_configuration(clean_config: bool) -> Result<(GlobalConfigurable, PathBuf), ConfigError> {
     let config_dir = es_runway_selector_project_dir().config_dir().to_path_buf();
 
     let mut raw_config_file = Cow::Borrowed(include_str!("../config.toml"));
@@ -430,7 +809,7 @@ fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), Co
         .add_source(config::File::from(config_file.clone()).required(true))
         .build()
         .expect("Failed to build configuration")
-        .try_deserialize::<Configurable>()?;
+        .try_deserialize::<GlobalConfigurable>()?;
     if clean_config {
         if let Some(path) = &configurable.euroscope_config_folder {
             raw_config_file = format!(
@@ -472,31 +851,109 @@ fn write_runway_file<T: Write>(
     Ok(())
 }
 
-fn search_for_newest_sct_file() -> Option<(PathBuf, String)> {
+fn euroscope_data_dirs() -> Vec<PathBuf> {
     let bd = BaseDirs::new();
     let ud = UserDirs::new();
-    let mut possibilities = [
+    let mut dirs: Vec<PathBuf> = [
         bd.map(|d| d.config_dir().join("Euroscope")),
-        ud.clone()
-            .and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
+        ud.and_then(|d| d.document_dir().map(|d| d.join("Euroscope"))),
     ]
     .into_iter()
     .flatten()
-    .chain({
-        std::iter::once(PathBuf::from(format!(
-            "/mnt/c/Users/{}/Documents/Euroscope/Euroscope_dev",
-            whoami::username().unwrap_or_log(),
-        )))
-    })
-    .collect_vec();
+    .collect();
+    dirs.push(PathBuf::from(format!(
+        "/mnt/c/Users/{}/Documents/Euroscope",
+        whoami::username().unwrap_or_log(),
+    )));
+    dirs.retain(|p| p.exists() && p.is_dir());
+    dirs
+}
 
-    possibilities.retain(|p| p.exists() && p.is_dir());
+fn search_for_newest_sct_file_with_prefix(prefix: &str) -> Option<(PathBuf, String)> {
+    let mut dirs = euroscope_data_dirs();
+    // Also check the _dev subfolder used by some EuroScope installations.
+    dirs.extend(
+        euroscope_data_dirs()
+            .into_iter()
+            .map(|d| d.join("Euroscope_dev"))
+            .filter(|p| p.exists() && p.is_dir()),
+    );
+    search_for_sct_with_prefix_in_possibilities(&dirs, prefix)
+}
 
-    search_for_sct_with_possibilities(&possibilities)
+fn extract_area_prefix(stem: &str) -> Option<String> {
+    let prefix: String = stem
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    if prefix.len() >= 2 {
+        Some(prefix)
+    } else {
+        None
+    }
+}
+
+fn auto_create_area_configs(config_dir: &Path) {
+    let search_dirs = euroscope_data_dirs();
+    if search_dirs.is_empty() {
+        return;
+    }
+
+    let mut found_prefixes: IndexSet<String> = IndexSet::new();
+    for dir in &search_dirs {
+        for entry in WalkDir::new(dir)
+            .max_depth(3)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sct") {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Some(prefix) = extract_area_prefix(stem)
+            {
+                found_prefixes.insert(prefix);
+            }
+        }
+    }
+
+    for prefix in &found_prefixes {
+        let area_dir = config_dir.join(prefix);
+        if area_dir.exists() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir_all(&area_dir) {
+            warn!("Failed to create area directory {:?}: {}", area_dir, e);
+            continue;
+        }
+        let content = format!(
+            "sector_file_prefix = \"{prefix}\"\n\
+             # The sector file is found automatically from your EuroScope installation.\n\
+             # Uncomment and edit the lines below as needed:\n\
+             \n\
+             # ignore_airports = []\n\
+             \n\
+             # [default_runways]\n\
+             # ENZV = 18\n"
+        );
+        if let Err(e) = fs::write(area_dir.join("area.toml"), &content) {
+            warn!("Failed to write area.toml for {}: {}", prefix, e);
+        } else {
+            tracing::info!("Created area config for {} at {:?}", prefix, area_dir);
+        }
+    }
 }
 
 fn search_for_sct_with_possibilities<P: AsRef<Path>>(
     possibilities: &[P],
+) -> Option<(PathBuf, String)> {
+    search_for_sct_with_prefix_in_possibilities(possibilities, DEFAULT_SECTOR_FILE_PREFIX)
+}
+
+fn search_for_sct_with_prefix_in_possibilities<P: AsRef<Path>>(
+    possibilities: &[P],
+    prefix: &str,
 ) -> Option<(PathBuf, String)> {
     let sct_files = possibilities
         .iter()
@@ -510,7 +967,7 @@ fn search_for_sct_with_possibilities<P: AsRef<Path>>(
                     let Some(extension) = e.path().extension() else {
                         return false;
                     };
-                    name.starts_with(DEFAULT_SECTOR_FILE_PREFIX) && extension == "sct"
+                    name.starts_with(prefix) && extension == "sct"
                 })
                 .map(|e| e.path().to_path_buf())
         })
@@ -532,7 +989,6 @@ fn get_sector_file_name<P: AsRef<Path>>(path: &P) -> Option<String> {
 }
 
 fn get_sector_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
-    // example file name: ENOR-Norway-NC_20250612121259-241301-0006.sct
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?<time>\d{14})").unwrap());
 
     if let Some(caps) = RE.captures(get_sector_file_name(path).as_deref().unwrap_or(""))
@@ -549,15 +1005,14 @@ fn get_sector_file_name_time<P: AsRef<Path>>(path: &P) -> DateTime {
 }
 
 fn systemtime_to_jiff_datetime(st: SystemTime) -> DateTime {
-    // Convert to duration since UNIX_EPOCH
     let duration = st.duration_since(SystemTime::UNIX_EPOCH).unwrap();
-
-    // Convert seconds and nanoseconds into a jiff DateTime (UTC)
     let ts = jiff::Timestamp::from_second(duration.as_secs() as i64).unwrap();
     let mut zoned = ts.to_zoned(TimeZone::system());
     zoned = zoned.with_time_zone(TimeZone::UTC);
     zoned.datetime()
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -566,16 +1021,27 @@ mod tests {
     impl ESConfig {
         pub fn new_for_test() -> Self {
             let config_file = PathBuf::from("config.toml");
-            let config: Configurable = Config::builder()
+            let global: GlobalConfigurable = Config::builder()
                 .add_source(config::File::from(config_file.clone()).required(true))
                 .build()
                 .expect("Failed to build configuration")
-                .try_deserialize::<Configurable>()
+                .try_deserialize::<GlobalConfigurable>()
                 .expect("Failed to deserialize configuration");
+            let profile = ProfileConfig {
+                name: "test".to_string(),
+                sector_file_prefix: None,
+                sector_file_dir: None,
+                ignore_airports: global.ignore_airports.clone(),
+                default_runways: global.default_runways.clone(),
+                plugins: Vec::new(),
+                area: None,
+            };
             Self {
                 euroscope_config_folder: PathBuf::from("/test/path"),
                 sector_file_prefix: "ENOR-Test".to_string(),
-                config,
+                global,
+                profile,
+                all_plugins: Vec::new(),
                 config_file_path: config_file,
                 app_launchers: IndexSet::new(),
             }
@@ -598,17 +1064,6 @@ mod tests {
         let target = DateTime::strptime("%Y%m%d%H%M%S", "20230403191923").unwrap();
         assert_eq!(dt, target);
     }
-
-    // [[executable]]
-    // name = "Euroscope"
-    // prf = "enor_rads.prf"
-
-    // [[executable]]
-    // name = "Euroscope"
-    // prf = "enor_gnd.prf"
-
-    // [[executable]]
-    // name = "TrackAudio"
 
     #[test]
     fn test_app_launcher_reader() {

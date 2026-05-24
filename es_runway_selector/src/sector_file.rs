@@ -40,19 +40,18 @@ pub(crate) fn load_airports_from_sct_runway_section<R: Read>(
             metar: None,
             runways: Vec::new(),
             runways_in_use: IndexMap::new(),
+            selection_tags: IndexMap::new(),
         });
 
         let runway = Runway {
-            runways: [
-                RunwayDirection {
-                    degrees: parts[2].parse()?,
-                    identifier: parts[0].into(),
-                },
-                RunwayDirection {
-                    degrees: parts[3].parse()?,
-                    identifier: parts[1].into(),
-                },
-            ],
+            primary: RunwayDirection {
+                identifier: parts[0].into(),
+                degrees: parts[2].parse()?,
+            },
+            reciprocal: Some(RunwayDirection {
+                identifier: parts[1].into(),
+                degrees: parts[3].parse()?,
+            }),
         };
         airport.runways.push(runway);
     }

@@ -1,0 +1,14 @@
+[tools]
+node = "22"
+
+[tasks.install]
+run = "npm install"
+description = "Install dependencies into node_modules/"
+
+[tasks.generate]
+run = "npm run generate"
+description = "Generate TypeScript types from ../../openapi.json"
+
+[tasks.dev]
+run = "npm run dev"
+description = "Start the plugin in dev mode (requires generate to have been run)"

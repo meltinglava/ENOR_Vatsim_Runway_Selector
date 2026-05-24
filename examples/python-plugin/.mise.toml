@@ -1,0 +1,27 @@
+[tools]
+python = "3.12"
+
+[settings]
+# Install packages into a project-local .venv/ instead of the system Python.
+python.venv_auto_create = true
+
+[tasks.install]
+run = [
+    "pip install -r requirements.txt",
+    "pip install -r requirements-dev.txt",
+]
+description = "Install runtime and codegen dependencies into the local .venv/"
+
+[tasks.generate]
+run = """
+datamodel-codegen \
+    --input ../../openapi.json \
+    --input-file-type openapi \
+    --output generated/models.py \
+    --output-model-type pydantic_v2.BaseModel
+"""
+description = "Generate Pydantic v2 models from ../../openapi.json"
+
+[tasks.dev]
+run = "python main.py"
+description = "Start the plugin (requires install and generate to have been run)"

@@ -1,0 +1,2 @@
+# Code generation from the OpenAPI spec
+datamodel-code-generator>=0.26.0

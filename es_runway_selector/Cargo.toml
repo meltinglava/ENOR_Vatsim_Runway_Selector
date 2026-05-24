@@ -9,6 +9,13 @@ repository.workspace = true
 
 [dependencies]
 askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
+axum = { workspace = true }
+flate2 = "1.1"
+runway_selector_protocol = { path = "../runway_selector_protocol" }
+tar = "0.4"
+tower-http = { workspace = true }
+utoipa = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 clap = { version = "4.6.1", features = ["derive"] }
 config = { version = "0.15.22", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
 directories = "6.0.0"
