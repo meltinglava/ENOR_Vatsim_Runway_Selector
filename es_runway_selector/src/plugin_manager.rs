@@ -204,7 +204,23 @@ async fn spawn_plugin_process(
 
     command
         .env("ES_RUNWAY_SELECTOR_PORT", parent_port.to_string())
-        .env("ES_RUNWAY_SELECTOR_PLUGIN_PORT", plugin_port.to_string());
+        .env("ES_RUNWAY_SELECTOR_PLUGIN_PORT", plugin_port.to_string())
+        .kill_on_drop(true);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Stdio;
+        // Detach from the parent console so the console window can close when the
+        // runway selector exits. Without this, a plugin launched from Explorer keeps
+        // the console handle alive past the parent's exit and the window (with the
+        // profile selection prompt still on screen) stays open forever.
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
