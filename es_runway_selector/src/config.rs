@@ -51,6 +51,30 @@ pub(crate) struct PluginConfig {
     pub working_dir: Option<PathBuf>,
 }
 
+/// Try to find `command` as a file inside `dir`.
+/// On Windows, if `command` has no `.exe` extension and the bare name is not found,
+/// also tries `<command>.exe`.
+fn resolve_local_command(dir: &Path, command: &str) -> Option<PathBuf> {
+    let local = dir.join(command);
+    if local.exists() {
+        return Some(local);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let has_exe = Path::new(command)
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("exe"))
+            .unwrap_or(false);
+        if !has_exe {
+            let with_exe = dir.join(format!("{command}.exe"));
+            if with_exe.exists() {
+                return Some(with_exe);
+            }
+        }
+    }
+    None
+}
+
 fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
     let path = dir.join("plugins.toml");
     if !path.exists() {
@@ -72,22 +96,24 @@ fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
     for plugin in &mut plugins {
         let cmd = Path::new(&plugin.command);
         if cmd.parent().map(|p| p == Path::new("")).unwrap_or(true) {
-            let local = dir.join(&plugin.command);
-            if local.exists() {
-                let resolved = local.to_string_lossy().into_owned();
-                debug!(
-                    plugin = %plugin.name,
-                    original = %plugin.command,
-                    resolved = %resolved,
-                    "Resolved plugin command to local path"
-                );
-                plugin.command = resolved;
-            } else {
-                debug!(
-                    plugin = %plugin.name,
-                    command = %plugin.command,
-                    "Plugin command not found locally; will rely on PATH"
-                );
+            match resolve_local_command(dir, &plugin.command) {
+                Some(resolved_path) => {
+                    let resolved = resolved_path.to_string_lossy().into_owned();
+                    debug!(
+                        plugin = %plugin.name,
+                        original = %plugin.command,
+                        resolved = %resolved,
+                        "Resolved plugin command to local path"
+                    );
+                    plugin.command = resolved;
+                }
+                None => {
+                    debug!(
+                        plugin = %plugin.name,
+                        command = %plugin.command,
+                        "Plugin command not found locally; will rely on PATH"
+                    );
+                }
             }
         }
     }
