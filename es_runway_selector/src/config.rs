@@ -51,8 +51,8 @@ pub(crate) struct PluginConfig {
     pub working_dir: Option<PathBuf>,
 }
 
-fn load_plugins(config_dir: &Path) -> Vec<PluginConfig> {
-    let path = config_dir.join("plugins.toml");
+fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
+    let path = dir.join("plugins.toml");
     if !path.exists() {
         return Vec::new();
     }
@@ -61,9 +61,21 @@ fn load_plugins(config_dir: &Path) -> Vec<PluginConfig> {
     let Some(toml::Value::Array(arr)) = value.get("plugins") else {
         return Vec::new();
     };
-    arr.iter()
+    let mut plugins: Vec<PluginConfig> = arr
+        .iter()
         .filter_map(|v| toml::Value::try_into(v.clone()).ok())
-        .collect()
+        .collect();
+    // Resolve bare command filenames (no path separator) against the plugin dir.
+    for plugin in &mut plugins {
+        let cmd = Path::new(&plugin.command);
+        if cmd.parent().map(|p| p == Path::new("")).unwrap_or(true) {
+            let local = dir.join(&plugin.command);
+            if local.exists() {
+                plugin.command = local.to_string_lossy().into_owned();
+            }
+        }
+    }
+    plugins
 }
 
 // ─── Profile config ───────────────────────────────────────────────────────────
@@ -298,21 +310,20 @@ impl ESConfig {
             .expect("config file has no parent")
             .to_path_buf();
 
-        let all_plugins = load_plugins(&config_dir);
-
         // On fresh installs, auto-create an area folder for each sector file found.
         if !has_area_directories(&config_dir) && !config_dir.join("profiles.toml").exists() {
             auto_create_area_configs(&config_dir);
         }
 
-        let profiles = if has_area_directories(&config_dir) {
+        let using_area_dirs = has_area_directories(&config_dir);
+        let profiles = if using_area_dirs {
             load_area_based_profiles(&config_dir)
         } else {
             load_profiles(&config_dir)
         };
 
         let profile = if profiles.is_empty() {
-            // No profiles.toml – synthesise one from the legacy flat config.
+            // No profiles configured – synthesise one from the legacy flat config.
             ProfileConfig {
                 name: "default".to_string(),
                 sector_file_prefix: None,
@@ -329,21 +340,54 @@ impl ESConfig {
         // Merge in downloaded area config if an `area` is referenced.
         let profile = merge_area_config(profile, &config_dir);
 
+        // Derive the area directory from the profile name ("ENOR/TWR" → "ENOR").
+        let area_name = profile
+            .name
+            .split('/')
+            .next()
+            .unwrap_or(&profile.name)
+            .to_string();
+        let area_dir = config_dir.join(&area_name);
+
+        // Plugins: area-local plugins.toml takes precedence; fall back to root.
+        let all_plugins = if area_dir.join("plugins.toml").exists() {
+            load_plugins(&area_dir)
+        } else {
+            load_plugins(&config_dir)
+        };
+
         // Sector file discovery: profile's explicit dir > auto search (prefix filter).
         let prefix = profile
             .sector_file_prefix
             .clone()
             .unwrap_or_else(|| DEFAULT_SECTOR_FILE_PREFIX.to_string());
 
-        let (sct_path, sector_file_prefix) = profile
+        let sct_result = profile
             .sector_file_dir
             .as_ref()
             .and_then(|d| search_for_sct_with_possibilities(&[d]))
             .or_else(|| search_for_newest_sct_file_with_prefix(&prefix))
-            .or_else(|| global.find_from_config())
-            .or_else(|| query_user_euroscope_config_folder(&mut global, &config_file_path))?;
+            .or_else(|| global.find_from_config());
 
-        let app_launchers = get_app_launchers(&config_file_path);
+        let (sct_path, sector_file_prefix) = match sct_result {
+            Some(r) => r,
+            None if using_area_dirs => {
+                warn!(
+                    "No sector file found for profile '{}'. Add 'sector_file_dir' to \
+                     {}/area.toml or place your EuroScope files in Documents/Euroscope.",
+                    profile.name, area_name
+                );
+                return None;
+            }
+            None => query_user_euroscope_config_folder(&mut global, &config_file_path)?,
+        };
+
+        // App launchers: area-local takes precedence; fall back to root config dir.
+        let app_launchers = if area_dir.join("app_launchers.toml").exists() {
+            get_app_launchers_from_dir(&area_dir)
+        } else {
+            get_app_launchers_from_dir(&config_dir)
+        };
 
         Some(Self {
             euroscope_config_folder: sct_path,
@@ -499,25 +543,44 @@ fn select_profile(
 }
 
 fn select_from_multiple(profiles: Vec<ProfileConfig>) -> Option<ProfileConfig> {
-    // Multiple profiles and none explicitly requested: prompt (non-musl) or pick first.
+    let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+
     #[cfg(not(target_env = "musl"))]
     {
-        let names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
-        let selection = rfd::MessageDialog::new()
-            .set_title("Select profile")
-            .set_description(format!(
-                "Multiple profiles available: {}\nEnter a profile name or press Cancel for the first.",
-                names.join(", ")
-            ))
-            .set_buttons(rfd::MessageButtons::OkCancel)
-            .show();
-
-        if !matches!(selection, rfd::MessageDialogResult::Ok) {
-            return profiles.into_iter().next();
+        use dialoguer::{Select, theme::ColorfulTheme};
+        if let Ok(idx) = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Multiple profiles found — select one (↑↓ arrows, Enter to confirm)")
+            .items(&names)
+            .default(0)
+            .interact()
+        {
+            let p = profiles.into_iter().nth(idx)?;
+            debug!(profile = %p.name, "User selected profile interactively");
+            return Some(p);
         }
     }
 
-    profiles.into_iter().next()
+    // Fallback (musl builds or no TTY): pick the first and log it.
+    let p = profiles.into_iter().next()?;
+    debug!(profile = %p.name, "Auto-selected first available profile");
+    Some(p)
+}
+
+/// Return the names of all configured profiles. Used by `--list-profiles`.
+pub(crate) fn list_profiles(clean_config: bool) -> Vec<String> {
+    let Ok((_, config_file_path)) = setup_configuration(clean_config) else {
+        return Vec::new();
+    };
+    let config_dir = config_file_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let profiles = if has_area_directories(&config_dir) {
+        load_area_based_profiles(&config_dir)
+    } else {
+        load_profiles(&config_dir)
+    };
+    profiles.into_iter().map(|p| p.name).collect()
 }
 
 /// Merge area config from `~/.config/es_runway_selector/areas/<name>/` into the profile.
@@ -671,11 +734,8 @@ impl AppLauncher {
     }
 }
 
-fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
-    let app_launchers_file_path = config_file_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("app_launchers.toml");
+fn get_app_launchers_from_dir(dir: &Path) -> IndexSet<AppLauncher> {
+    let app_launchers_file_path = dir.join("app_launchers.toml");
 
     if !app_launchers_file_path.exists() {
         debug!(
@@ -1067,7 +1127,7 @@ mod tests {
 
     #[test]
     fn test_app_launcher_reader() {
-        let config_file = get_app_launchers(&PathBuf::from("test.toml"));
+        let config_file = get_app_launchers_from_dir(Path::new("."));
         let mut expected = IndexSet::new();
         expected.insert(AppLauncher {
             name: "EuroScope".to_string(),

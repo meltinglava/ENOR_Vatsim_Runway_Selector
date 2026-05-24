@@ -71,6 +71,10 @@ struct Cli {
     /// List areas available in all configured manifest sources and exit.
     #[clap(long)]
     list_areas: bool,
+
+    /// List all configured profiles and exit.
+    #[clap(long)]
+    list_profiles: bool,
 }
 
 fn get_target() -> &'static str {
@@ -111,6 +115,22 @@ fn update() -> ApplicationResult<bool> {
 }
 
 async fn run(cli: Cli) -> ApplicationResult<()> {
+    // ── --list-profiles ───────────────────────────────────────────────────────
+    if cli.list_profiles {
+        let profiles = config::list_profiles(cli.clean_config);
+        if profiles.is_empty() {
+            println!("No profiles configured.");
+            println!("Run the selector once to auto-detect areas from your EuroScope files,");
+            println!("or create a config/<AREA>/area.toml manually.");
+        } else {
+            println!("Available profiles (use -p <NAME> to select):");
+            for name in &profiles {
+                println!("  {name}");
+            }
+        }
+        return Ok(());
+    }
+
     // ── --generate-openapi ────────────────────────────────────────────────────
     if cli.generate_openapi {
         let json = api_server::generate_openapi_json();

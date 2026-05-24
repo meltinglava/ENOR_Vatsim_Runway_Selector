@@ -120,9 +120,13 @@ pub(crate) async fn start(requested_port: u16) -> std::io::Result<u16> {
 
 // ─── OpenAPI spec generation ──────────────────────────────────────────────────
 
-/// Serialise the combined OpenAPI spec to pretty JSON.
+/// Serialise the combined OpenAPI spec to pretty JSON with a trailing newline.
 pub(crate) fn generate_openapi_json() -> String {
-    PluginAndParentApiDoc::openapi()
+    let mut json = PluginAndParentApiDoc::openapi()
         .to_pretty_json()
-        .expect("Failed to serialize OpenAPI spec")
+        .expect("Failed to serialize OpenAPI spec");
+    if !json.ends_with('\n') {
+        json.push('\n');
+    }
+    json
 }

@@ -8,12 +8,17 @@ use crate::types::{
     WindDirection,
 };
 
-/// Serialize the full plugin + parent OpenAPI spec to a pretty-printed JSON string.
+/// Serialize the full plugin + parent OpenAPI spec to a pretty-printed JSON string with a
+/// trailing newline.
 pub fn generate_openapi_json() -> String {
     use utoipa::OpenApi as _;
-    PluginAndParentApiDoc::openapi()
+    let mut json = PluginAndParentApiDoc::openapi()
         .to_pretty_json()
-        .expect("OpenAPI serialization failed")
+        .expect("OpenAPI serialization failed");
+    if !json.ends_with('\n') {
+        json.push('\n');
+    }
+    json
 }
 
 /// Combined OpenAPI document covering both:
