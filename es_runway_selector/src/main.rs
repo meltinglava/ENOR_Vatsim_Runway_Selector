@@ -119,41 +119,7 @@ fn update() -> ApplicationResult<bool> {
     })
 }
 
-async fn run(cli: Cli) -> ApplicationResult<()> {
-    // ── --generate-openapi ────────────────────────────────────────────────────
-    if cli.generate_openapi {
-        let json = api_server::generate_openapi_json();
-        std::fs::write("openapi.json", &json)?;
-        info!("OpenAPI spec written to openapi.json");
-        println!("openapi.json written ({} bytes)", json.len());
-        return Ok(());
-    }
-
-    // ── --list-profiles ───────────────────────────────────────────────────────
-    if cli.list_profiles {
-        let profiles = config::list_profiles(cli.clean_config);
-        if profiles.is_empty() {
-            println!("No profiles configured.");
-            println!("Run the selector once to auto-detect areas from your EuroScope files,");
-            println!("or create a config/<AREA>/area.toml manually.");
-        } else {
-            println!("Available profiles (use -p <NAME> to select):");
-            for name in &profiles {
-                println!("  {name}");
-            }
-        }
-        return Ok(());
-    }
-
-    let config = Arc::new(
-        ESConfig::find_euroscope_config_folder(
-            cli.clean_config,
-            cli.profile.as_deref(),
-            cli.plugin.as_deref(),
-        )
-        .unwrap_or_log(),
-    );
-
+async fn run(cli: Cli, config: Arc<ESConfig>) -> ApplicationResult<()> {
     let config_dir = config::es_runway_selector_project_dir()
         .config_dir()
         .to_path_buf();
@@ -363,10 +329,47 @@ fn main() -> ApplicationResult<()> {
             Err(e) => warn!("Update check failed: {0}, {0:?}", e),
         }
     }
+    // ── --generate-openapi ────────────────────────────────────────────────────
+    if cli.generate_openapi {
+        let json = api_server::generate_openapi_json();
+        std::fs::write("openapi.json", &json)?;
+        info!("OpenAPI spec written to openapi.json");
+        println!("openapi.json written ({} bytes)", json.len());
+        return Ok(());
+    }
+
+    // ── --list-profiles ───────────────────────────────────────────────────────
+    if cli.list_profiles {
+        let profiles = config::list_profiles(cli.clean_config);
+        if profiles.is_empty() {
+            println!("No profiles configured.");
+            println!("Run the selector once to auto-detect areas from your EuroScope files,");
+            println!("or create a config/<AREA>/area.toml manually.");
+        } else {
+            println!("Available profiles (use -p <NAME> to select):");
+            for name in &profiles {
+                println!("  {name}");
+            }
+        }
+        return Ok(());
+    }
+
+    // ── Profile selection + config loading ────────────────────────────────────
+    // Must happen before the Tokio runtime starts: dialoguer needs exclusive
+    // access to the console, which Tokio's signal/IO setup on Windows disrupts.
     println!();
+    let config = Arc::new(
+        ESConfig::find_euroscope_config_folder(
+            cli.clean_config,
+            cli.profile.as_deref(),
+            cli.plugin.as_deref(),
+        )
+        .unwrap_or_log(),
+    );
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run(cli))?;
+        .block_on(run(cli, config))?;
     Ok(())
 }
