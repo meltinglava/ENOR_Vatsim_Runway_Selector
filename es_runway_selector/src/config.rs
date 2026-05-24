@@ -417,6 +417,22 @@ impl ESConfig {
         let area_dir = config_dir.join(&area_name);
         debug!(area_dir = %area_dir.display(), "Area directory");
 
+        // Load area-level config.toml if present — overrides root config.toml settings.
+        // Precedence: CLI --plugin > area config.toml > root config.toml.
+        let area_config_path = area_dir.join("config.toml");
+        if area_config_path.exists()
+            && let Ok(raw) = fs::read_to_string(&area_config_path)
+            && let Ok(v) = toml::from_str::<toml::Value>(&raw)
+            && let Some(plugin_name) = v.get("plugin").and_then(|v| v.as_str())
+        {
+            debug!(
+                plugin = %plugin_name,
+                path = %area_config_path.display(),
+                "Plugin from area config.toml"
+            );
+            global.plugin = Some(plugin_name.to_string());
+        }
+
         // Plugins: area-local plugins.toml takes precedence; fall back to root.
         let all_plugins = if area_dir.join("plugins.toml").exists() {
             debug!(area = %area_name, "Loading plugins from area directory");
@@ -426,7 +442,7 @@ impl ESConfig {
             load_plugins(&config_dir)
         };
 
-        // Apply CLI override: --plugin takes precedence over config.toml.
+        // Apply CLI override: --plugin takes precedence over area and root config.toml.
         if let Some(name) = plugin_override {
             debug!(plugin = %name, "Plugin overridden from CLI");
             global.plugin = Some(name.to_string());
