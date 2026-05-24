@@ -97,7 +97,7 @@ fn load_plugins(dir: &Path) -> Vec<PluginConfig> {
 
 // ─── Profile config ───────────────────────────────────────────────────────────
 
-/// One named profile (sector file + per-FIR tuning + plugin references).
+/// One named profile (sector file + per-FIR tuning).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[skip_serializing_none]
 pub(crate) struct ProfileConfig {
@@ -112,9 +112,6 @@ pub(crate) struct ProfileConfig {
     /// Default runway number per airport (e.g. `ENGM = 1` → runway "01").
     #[serde(default)]
     pub default_runways: IndexMap<String, u8>,
-    /// Names of plugins (from `plugins.toml`) active for this profile.
-    #[serde(default)]
-    pub plugins: Vec<String>,
     /// Optional reference to a downloaded area config folder name.
     pub area: Option<String>,
 }
@@ -152,17 +149,12 @@ struct AreaFileConfig {
     ignore_airports: IndexSet<String>,
     #[serde(default)]
     default_runways: IndexMap<String, u8>,
-    #[serde(default)]
-    plugins: Vec<String>,
 }
 
 /// One named profile override, from `[[profiles]]` in `config/<AREA>/profiles.toml`.
 #[derive(Debug, Clone, Deserialize)]
 struct AreaProfileEntry {
     name: String,
-    /// Additional plugins appended to the area's plugin list.
-    #[serde(default)]
-    plugins: Vec<String>,
     /// Additional airports to ignore (merged with the area list).
     #[serde(default)]
     ignore_airports: IndexSet<String>,
@@ -238,13 +230,6 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                     .sector_file_dir
                     .or_else(|| area_cfg.sector_file_dir.clone());
 
-                let mut plugins = area_cfg.plugins.clone();
-                for p in &entry.plugins {
-                    if !plugins.contains(p) {
-                        plugins.push(p.clone());
-                    }
-                }
-
                 let mut ignore_airports = area_cfg.ignore_airports.clone();
                 ignore_airports.extend(entry.ignore_airports);
 
@@ -257,7 +242,6 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                 let profile_name = format!("{}/{}", area_name, entry.name);
                 debug!(
                     profile = %profile_name,
-                    plugins = ?plugins,
                     sector_file_dir = ?sector_file_dir,
                     "Built profile"
                 );
@@ -267,7 +251,6 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                     sector_file_dir,
                     ignore_airports,
                     default_runways,
-                    plugins,
                     area: None,
                 });
             }
@@ -275,7 +258,6 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
             // Single-profile area: profile is named after the area folder.
             debug!(
                 profile = %area_name,
-                plugins = ?area_cfg.plugins,
                 sector_file_dir = ?area_cfg.sector_file_dir,
                 "Built single profile for area"
             );
@@ -285,7 +267,6 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
                 sector_file_dir: area_cfg.sector_file_dir,
                 ignore_airports: area_cfg.ignore_airports,
                 default_runways: area_cfg.default_runways,
-                plugins: area_cfg.plugins,
                 area: None,
             });
         }
@@ -316,6 +297,10 @@ struct GlobalConfigurable {
     /// Port for the parent HTTP API server. `0` picks a random free port.
     #[serde(default = "default_api_port")]
     pub api_port: u16,
+
+    /// Name of the active plugin (must match a `name` entry in `plugins.toml`).
+    /// Only one plugin is supported at a time. Leave unset to run without a plugin.
+    pub plugin: Option<String>,
 }
 
 fn default_api_port() -> u16 {
@@ -391,7 +376,6 @@ impl ESConfig {
                 sector_file_dir: global.euroscope_config_folder.clone(),
                 ignore_airports: global.ignore_airports.clone(),
                 default_runways: global.default_runways.clone(),
-                plugins: Vec::new(),
                 area: None,
             }
         } else {
@@ -400,7 +384,6 @@ impl ESConfig {
 
         info!(
             profile = %profile.name,
-            plugins = ?profile.plugins,
             ignore_airports = ?profile.ignore_airports,
             "Active profile"
         );
@@ -430,13 +413,14 @@ impl ESConfig {
         for p in &all_plugins {
             debug!(plugin = %p.name, command = %p.command, working_dir = ?p.working_dir, "Available plugin");
         }
-        let active_names: Vec<&str> = profile.plugins.iter().map(String::as_str).collect();
-        for name in &active_names {
-            if !all_plugins.iter().any(|p| p.name == *name) {
-                warn!(plugin = %name, "Plugin referenced by profile not found in plugins.toml");
+        if let Some(name) = &global.plugin {
+            if !all_plugins.iter().any(|p| &p.name == name) {
+                warn!(plugin = %name, "Plugin configured in config.toml not found in plugins.toml");
             }
+            debug!(plugin = %name, "Active plugin");
+        } else {
+            debug!("No plugin configured in config.toml");
         }
-        debug!(active = ?active_names, "Plugins active for this profile");
 
         // Sector file discovery: profile's explicit dir > auto search (prefix filter).
         let prefix = profile
@@ -518,13 +502,15 @@ impl ESConfig {
         &self.profile.default_runways
     }
 
-    /// Plugins active for the current profile.
+    /// Returns the active plugin config, if one is configured in `config.toml`.
     pub fn active_plugin_configs(&self) -> Vec<&PluginConfig> {
-        self.profile
-            .plugins
-            .iter()
-            .filter_map(|name| self.all_plugins.iter().find(|p| &p.name == name))
-            .collect()
+        match &self.global.plugin {
+            Some(name) => match self.all_plugins.iter().find(|p| &p.name == name) {
+                Some(plugin) => vec![plugin],
+                None => vec![],
+            },
+            None => vec![],
+        }
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {
@@ -724,22 +710,6 @@ fn merge_area_config(mut profile: ProfileConfig, config_dir: &Path) -> ProfileCo
             }
             for (icao, rwy) in ac.default_runways {
                 profile.default_runways.entry(icao).or_insert(rwy);
-            }
-        }
-    }
-
-    // Merge area's plugins.toml plugin *names* into the profile.
-    let area_plugins_path = area_dir.join("plugins.toml");
-    if area_plugins_path.exists()
-        && let Ok(raw) = fs::read_to_string(&area_plugins_path)
-        && let Ok(value) = toml::from_str::<toml::Value>(&raw)
-        && let Some(toml::Value::Array(arr)) = value.get("plugins")
-    {
-        for v in arr {
-            if let Some(name) = v.get("name").and_then(|n| n.as_str())
-                && !profile.plugins.contains(&name.to_string())
-            {
-                profile.plugins.push(name.to_string());
             }
         }
     }
@@ -1219,7 +1189,6 @@ mod tests {
                 sector_file_dir: None,
                 ignore_airports: global.ignore_airports.clone(),
                 default_runways: global.default_runways.clone(),
-                plugins: Vec::new(),
                 area: None,
             };
             Self {
