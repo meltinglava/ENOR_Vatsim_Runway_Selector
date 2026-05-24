@@ -58,6 +58,11 @@ struct Cli {
     #[clap(long, short)]
     profile: Option<String>,
 
+    /// Override the active plugin by name (must match a [[plugins]] entry in plugins.toml).
+    /// Takes precedence over the `plugin` setting in config.toml.
+    #[clap(long)]
+    plugin: Option<String>,
+
     /// Write the combined plugin + parent OpenAPI spec to `openapi.json`
     /// in the current directory and exit.
     #[clap(long)]
@@ -141,8 +146,12 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     }
 
     let config = Arc::new(
-        ESConfig::find_euroscope_config_folder(cli.clean_config, cli.profile.as_deref())
-            .unwrap_or_log(),
+        ESConfig::find_euroscope_config_folder(
+            cli.clean_config,
+            cli.profile.as_deref(),
+            cli.plugin.as_deref(),
+        )
+        .unwrap_or_log(),
     );
 
     let config_dir = config::es_runway_selector_project_dir()

@@ -175,12 +175,14 @@ fn has_area_directories(config_dir: &Path) -> bool {
         .any(|e| e.path().is_dir() && e.path().join("area.toml").exists())
 }
 
-/// Scan all area subdirectories under `config_dir` and build a flat list of
-/// `ProfileConfig` values.
+/// Scan area subdirectories under `config_dir` and build a flat list of `ProfileConfig` values.
+///
+/// If `only_area` is given, only that one area directory is processed (fast path when the
+/// requested profile is already known).
 ///
 /// - An area with no `profiles.toml` → one profile named after the area folder.
 /// - An area with `profiles.toml` → one profile per entry, named `"<AREA>/<profile>"`.
-fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
+fn load_area_based_profiles(config_dir: &Path, only_area: Option<&str>) -> Vec<ProfileConfig> {
     let mut profiles = Vec::new();
 
     let Ok(entries) = fs::read_dir(config_dir) else {
@@ -190,7 +192,13 @@ fn load_area_based_profiles(config_dir: &Path) -> Vec<ProfileConfig> {
 
     let mut area_dirs: Vec<_> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir() && e.path().join("area.toml").exists())
+        .filter(|e| {
+            e.path().is_dir()
+                && e.path().join("area.toml").exists()
+                && only_area
+                    .map(|a| e.file_name().to_string_lossy().eq_ignore_ascii_case(a))
+                    .unwrap_or(true)
+        })
         .collect();
     area_dirs.sort_by_key(|e| e.file_name());
 
@@ -341,6 +349,7 @@ impl ESConfig {
     pub fn find_euroscope_config_folder(
         clean_config: bool,
         requested_profile: Option<&str>,
+        plugin_override: Option<&str>,
     ) -> Option<Self> {
         let (mut global, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
         let config_dir = config_file_path
@@ -360,8 +369,15 @@ impl ESConfig {
 
         let using_area_dirs = has_area_directories(&config_dir);
         let profiles = if using_area_dirs {
-            debug!("Using area-directory based profiles");
-            load_area_based_profiles(&config_dir)
+            // If the requested area is known, only load that one directory.
+            let area_hint = requested_profile.map(|p| p.split('/').next().unwrap_or(p));
+            let only_area = area_hint.filter(|a| config_dir.join(a).join("area.toml").exists());
+            if let Some(area) = only_area {
+                debug!(area = %area, "Loading profile for requested area only");
+            } else {
+                debug!("Loading all area profiles");
+            }
+            load_area_based_profiles(&config_dir, only_area)
         } else {
             debug!("Using flat profiles.toml");
             load_profiles(&config_dir)
@@ -410,16 +426,42 @@ impl ESConfig {
             load_plugins(&config_dir)
         };
 
-        for p in &all_plugins {
-            debug!(plugin = %p.name, command = %p.command, working_dir = ?p.working_dir, "Available plugin");
+        // Apply CLI override: --plugin takes precedence over config.toml.
+        if let Some(name) = plugin_override {
+            debug!(plugin = %name, "Plugin overridden from CLI");
+            global.plugin = Some(name.to_string());
         }
-        if let Some(name) = &global.plugin {
-            if !all_plugins.iter().any(|p| &p.name == name) {
-                warn!(plugin = %name, "Plugin configured in config.toml not found in plugins.toml");
-            }
-            debug!(plugin = %name, "Active plugin");
+
+        let active_plugin_name = global.plugin.as_deref();
+        if all_plugins.is_empty() {
+            debug!("No plugin definitions found in plugins.toml");
         } else {
-            debug!("No plugin configured in config.toml");
+            let names: Vec<&str> = all_plugins.iter().map(|p| p.name.as_str()).collect();
+            debug!(defined = ?names, "Plugin definitions loaded from plugins.toml");
+        }
+        match active_plugin_name {
+            Some(name) if all_plugins.iter().any(|p| p.name == name) => {
+                info!(plugin = %name, "Active plugin");
+            }
+            Some(name) => {
+                warn!(
+                    plugin = %name,
+                    "Plugin '{}' not found in plugins.toml — will run without a plugin",
+                    name
+                );
+                global.plugin = None;
+            }
+            None => {
+                if !all_plugins.is_empty() {
+                    let names: Vec<&str> = all_plugins.iter().map(|p| p.name.as_str()).collect();
+                    info!(
+                        available = ?names,
+                        "No plugin active. To activate one, set `plugin = \"<name>\"` in config.toml or pass `--plugin <name>`"
+                    );
+                } else {
+                    debug!("Running without a plugin");
+                }
+            }
         }
 
         // Sector file discovery: profile's explicit dir > auto search (prefix filter).
@@ -672,7 +714,7 @@ pub(crate) fn list_profiles(clean_config: bool) -> Vec<String> {
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
     let profiles = if has_area_directories(&config_dir) {
-        load_area_based_profiles(&config_dir)
+        load_area_based_profiles(&config_dir, None)
     } else {
         load_profiles(&config_dir)
     };
