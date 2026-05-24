@@ -431,20 +431,42 @@ impl ESConfig {
         let area_dir = config_dir.join(&area_name);
         debug!(area_dir = %area_dir.display(), "Area directory");
 
+        // Log what the root config.toml provided (if anything).
+        if let Some(p) = &global.plugin {
+            debug!(plugin = %p, "Plugin from root config.toml");
+        }
+
         // Load area-level config.toml if present — overrides root config.toml settings.
         // Precedence: CLI --plugin > area config.toml > root config.toml.
         let area_config_path = area_dir.join("config.toml");
-        if area_config_path.exists()
-            && let Ok(raw) = fs::read_to_string(&area_config_path)
-            && let Ok(v) = toml::from_str::<toml::Value>(&raw)
-            && let Some(plugin_name) = v.get("plugin").and_then(|v| v.as_str())
-        {
-            debug!(
-                plugin = %plugin_name,
-                path = %area_config_path.display(),
-                "Plugin from area config.toml"
-            );
-            global.plugin = Some(plugin_name.to_string());
+        if area_config_path.exists() {
+            match fs::read_to_string(&area_config_path)
+                .map_err(|e| e.to_string())
+                .and_then(|raw| toml::from_str::<toml::Value>(&raw).map_err(|e| e.to_string()))
+            {
+                Ok(v) => match v.get("plugin").and_then(|v| v.as_str()) {
+                    Some(plugin_name) => {
+                        debug!(
+                            plugin = %plugin_name,
+                            path = %area_config_path.display(),
+                            "Plugin from area config.toml"
+                        );
+                        global.plugin = Some(plugin_name.to_string());
+                    }
+                    None => debug!(
+                        path = %area_config_path.display(),
+                        "Area config.toml has no `plugin` key"
+                    ),
+                },
+                Err(e) => warn!(
+                    path = %area_config_path.display(),
+                    error = %e,
+                    "Failed to parse area config.toml — check for unescaped backslashes \
+                     (use single quotes for Windows paths: plugin = 'value')"
+                ),
+            }
+        } else {
+            debug!(path = %area_config_path.display(), "No area config.toml found");
         }
 
         // Plugins: area-local plugins.toml takes precedence; fall back to root.
