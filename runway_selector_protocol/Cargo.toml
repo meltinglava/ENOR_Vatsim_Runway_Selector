@@ -1,0 +1,20 @@
+[package]
+name = "runway_selector_protocol"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "gRPC protocol definitions for runway-selector area plugins"
+
+[dependencies]
+prost = { workspace = true }
+prost-types = { workspace = true }
+tonic = { workspace = true }
+tonic-health = { workspace = true }
+tonic-prost = { workspace = true }
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-prost-build = { workspace = true }
+which = "8"

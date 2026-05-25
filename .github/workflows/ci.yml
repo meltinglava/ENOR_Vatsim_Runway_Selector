@@ -32,6 +32,7 @@ jobs:
             build-base \
             pkgconf \
             libxkbcommon-dev \
+            protoc \
             tar zstd
 
       - name: Set up Rust components
@@ -79,7 +80,7 @@ jobs:
           apk add --no-cache \
             build-base \
             pkgconf pkgconfig \
-            libxkbcommon-dev tar bash
+            libxkbcommon-dev protoc tar bash
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

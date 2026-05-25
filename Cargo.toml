@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job"]
+members = ["es_runway_selector", "metar_decoder", "find_bad_metar_job", "runway_selector_protocol"]
 
 [workspace.package]
 authors = ["meltinglava"]
@@ -16,6 +16,8 @@ indexmap = { version = "2.14.0", features = ["serde"] }
 itertools = "0.14.0"
 jiff = { version = "0.2.24", features = ["serde"] }
 nom = "8.0.0"
+prost = "0.14"
+prost-types = "0.14"
 reqwest = { version = "0.13.3", features = ["rustls-no-provider"], default-features = false }
 rustls = { version = "0.23.40", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -23,6 +25,10 @@ serde_json = { version = "1.0.149", features = ["indexmap", "preserve_order"] }
 serde_with = { version = "3.20.0", default-features = false, features = ["macros", "std"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", default-features = false, features = ["macros", "rt-multi-thread", "process", "time"] }
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "router", "server"] }
+tonic-health = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "ansi", "json", "env-filter", "std"] }
 tracing-test = "0.2.6"
