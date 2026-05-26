@@ -2330,6 +2330,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "runway_selector_plugin_host"
+version = "0.0.1-alpha.53"
+dependencies = [
+ "runway_selector_core",
+ "runway_selector_protocol",
+ "semver",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tracing",
+ "which",
+]
+
+[[package]]
 name = "runway_selector_protocol"
 version = "0.0.1-alpha.53"
 dependencies = [

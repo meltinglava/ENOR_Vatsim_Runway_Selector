@@ -1,0 +1,24 @@
+[package]
+name = "runway_selector_plugin_host"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Subprocess lifecycle and gRPC client wiring for area plugins"
+
+[dependencies]
+runway_selector_core = { path = "../runway_selector_core" }
+runway_selector_protocol = { path = "../runway_selector_protocol" }
+
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time", "net", "io-util"] }
+tonic = { workspace = true }
+tonic-health = { workspace = true }
+tracing = { workspace = true }
+which = "8"
+
+[dev-dependencies]
+semver = "1.0.27"
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["test-util"] }
