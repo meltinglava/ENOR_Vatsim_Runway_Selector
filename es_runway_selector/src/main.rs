@@ -1,6 +1,7 @@
 pub(crate) mod area_cli;
 pub(crate) mod config;
 pub(crate) mod error;
+pub(crate) mod wizard;
 
 use std::{
     fs::File,
@@ -95,6 +96,17 @@ fn update() -> ApplicationResult<bool> {
 
 async fn run(cli: Cli) -> ApplicationResult<()> {
     let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
+
+    // First-run wizard: tell the user what to install if they haven't yet.
+    // Always informational — never blocks the main flow.
+    if let Ok(top_level) = area_cli::load_top_level_config() {
+        let install_dir = area_cli::resolved_install_dir(&top_level);
+        match wizard::detect_setup_state(&install_dir, Some(config.get_sector_file_prefix())) {
+            Ok(state) => wizard::print_setup_state(&state),
+            Err(e) => warn!(error = ?e, "Setup-state detection failed"),
+        }
+    }
+
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
         let handles = config_task1.run_apps(false).await;

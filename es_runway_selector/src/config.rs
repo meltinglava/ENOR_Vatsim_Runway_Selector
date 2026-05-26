@@ -101,6 +101,10 @@ impl ESConfig {
             .join(format!("{}.rwy", self.sector_file_prefix))
     }
 
+    pub fn get_sector_file_prefix(&self) -> &str {
+        &self.sector_file_prefix
+    }
+
     pub async fn run_apps(&self, euroscope_ready: bool) -> Vec<tokio::task::JoinHandle<()>> {
         let mut already_running = IndexMap::new();
         let mut first_euroscope_started = false;

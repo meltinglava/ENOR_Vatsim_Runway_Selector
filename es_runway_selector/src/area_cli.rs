@@ -23,6 +23,19 @@ pub enum AreaCommand {
     Install { name: String },
     /// Remove an installed area by name.
     Remove { name: String },
+    /// Inspect profiles within an installed area.
+    Profile {
+        #[command(subcommand)]
+        cmd: ProfileCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    /// List profiles across every installed area.
+    List,
+    /// Print the resolved (base + .local override) contents of one profile.
+    Show { area: String, profile: String },
 }
 
 pub async fn run_area_command(cmd: AreaCommand) -> ApplicationResult<()> {
@@ -34,18 +47,58 @@ pub async fn run_area_command(cmd: AreaCommand) -> ApplicationResult<()> {
         AreaCommand::Available => print_available(&top_level).await?,
         AreaCommand::Install { name } => do_install(&top_level, &install_dir, &name).await?,
         AreaCommand::Remove { name } => do_remove(&install_dir, &name)?,
+        AreaCommand::Profile { cmd } => run_profile_command(cmd, &install_dir)?,
     }
     Ok(())
 }
 
-fn load_top_level_config() -> ApplicationResult<TopLevelConfig> {
+fn run_profile_command(cmd: ProfileCommand, install_dir: &Path) -> ApplicationResult<()> {
+    match cmd {
+        ProfileCommand::List => print_profiles(install_dir),
+        ProfileCommand::Show { area, profile } => print_profile(install_dir, &area, &profile),
+    }
+}
+
+fn print_profiles(install_dir: &Path) -> ApplicationResult<()> {
+    let areas = crate::wizard::list_areas_with_profiles(install_dir)?;
+    if areas.is_empty() {
+        println!("No areas installed.");
+        return Ok(());
+    }
+    for (manifest, profiles) in areas {
+        if profiles.is_empty() {
+            println!("{name}: (no profiles)", name = manifest.name);
+            continue;
+        }
+        println!("{name}:", name = manifest.name);
+        for p in profiles {
+            println!("  {n:20} {d}", n = p.name, d = p.display_name);
+        }
+    }
+    Ok(())
+}
+
+fn print_profile(install_dir: &Path, area: &str, profile: &str) -> ApplicationResult<()> {
+    match crate::wizard::load_profile_in_area(install_dir, area, profile)? {
+        Some(p) => {
+            println!("name        : {}", p.name);
+            println!("display_name: {}", p.display_name);
+            println!("prf_files   : {:?}", p.prf_files);
+            println!("default_apps: {:?}", p.default_apps);
+        }
+        None => println!("Profile {area}/{profile} not found"),
+    }
+    Ok(())
+}
+
+pub fn load_top_level_config() -> ApplicationResult<TopLevelConfig> {
     let path = es_runway_selector_project_dir()
         .config_dir()
         .join("config.toml");
     Ok(load_with_local_override::<TopLevelConfig>(&path)?)
 }
 
-fn resolved_install_dir(cfg: &TopLevelConfig) -> PathBuf {
+pub fn resolved_install_dir(cfg: &TopLevelConfig) -> PathBuf {
     cfg.areas_install_dir
         .clone()
         .unwrap_or_else(|| es_runway_selector_project_dir().data_dir().join("areas"))
