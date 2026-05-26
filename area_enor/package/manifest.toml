@@ -1,0 +1,12 @@
+name = "enor"
+version = "0.1.0"
+display_name = "Polaris / ENOR (Norway FIR)"
+description = "Runway selection logic for the Norwegian FIR (ENOR) and the Stavanger sector of the Polaris/Scandinavian area."
+runtime = "rust"
+entry = "area_enor"
+supported_icaos = [
+  "ENAL", "ENAN", "ENAT", "ENBL", "ENBN", "ENBO", "ENBR", "ENBS", "ENBV",
+  "ENCN", "ENDU", "ENEV", "ENFL", "ENGM", "ENHK", "ENHD", "ENKB", "ENKR",
+  "ENLK", "ENML", "ENMS", "ENNA", "ENNO", "ENOL", "ENRA", "ENRO", "ENRY",
+  "ENSD", "ENSG", "ENSH", "ENSO", "ENST", "ENTC", "ENTO", "ENVA", "ENZV",
+]

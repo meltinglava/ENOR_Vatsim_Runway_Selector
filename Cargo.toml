@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "area_enor",
     "es_runway_selector",
     "metar_decoder",
     "find_bad_metar_job",

@@ -1,0 +1,4 @@
+name = "rads"
+display_name = "Radar / Approach"
+prf_files = ["enor_rads.prf"]
+default_apps = ["EuroScope", "TrackAudio", "vacs"]

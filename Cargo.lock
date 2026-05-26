@@ -92,6 +92,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "area_enor"
+version = "0.0.1-alpha.53"
+dependencies = [
+ "clap",
+ "prost",
+ "prost-types",
+ "runway_selector_core",
+ "runway_selector_protocol",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tonic-prost",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "askama"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
