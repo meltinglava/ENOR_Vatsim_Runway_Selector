@@ -1,3 +1,4 @@
+pub(crate) mod area_cli;
 pub(crate) mod config;
 pub(crate) mod error;
 
@@ -32,6 +33,9 @@ const METAR_URLS: &[&str] = &[
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     #[clap(long, short)]
     /// Resets the config file (but keeps the es folder information)
     clean_config: bool,
@@ -41,6 +45,15 @@ struct Cli {
     log_level: Option<String>,
     #[clap(long, hide = true)]
     previous_log_path: Option<PathBuf>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Manage installable area plugins (per-FIR runway selection logic)
+    Area {
+        #[command(subcommand)]
+        cmd: area_cli::AreaCommand,
+    },
 }
 
 fn get_target() -> &'static str {
@@ -207,7 +220,7 @@ fn main() -> ApplicationResult<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install ring crypto provider");
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) && cli.previous_log_path.is_none() {
@@ -240,9 +253,13 @@ fn main() -> ApplicationResult<()> {
         }
     }
     println!();
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?
-        .block_on(run(cli))?;
+        .build()?;
+    let command = cli.command.take();
+    match command {
+        Some(Command::Area { cmd }) => runtime.block_on(area_cli::run_area_command(cmd))?,
+        None => runtime.block_on(run(cli))?,
+    }
     Ok(())
 }

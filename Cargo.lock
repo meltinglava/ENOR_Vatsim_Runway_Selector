@@ -748,6 +748,7 @@ dependencies = [
  "jiff",
  "regex",
  "rfd",
+ "runway_selector_areas",
  "runway_selector_core",
  "rustls",
  "self_update",
@@ -823,6 +824,7 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
+ "crc32fast",
  "miniz_oxide",
  "zlib-rs",
 ]
@@ -2302,6 +2304,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "runway_selector_areas"
+version = "0.0.1-alpha.53"
+dependencies = [
+ "flate2",
+ "hex",
+ "reqwest 0.13.3",
+ "runway_selector_core",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "runway_selector_core"
 version = "0.0.1-alpha.53"
 dependencies = [
@@ -2841,9 +2862,9 @@ dependencies = [
 
 [[package]]
 name = "tar"
-version = "0.4.44"
+version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
 dependencies = [
  "filetime",
  "libc",

@@ -1,0 +1,27 @@
+[package]
+name = "runway_selector_areas"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Area registry, install, and removal for runway_selector areas"
+
+[dependencies]
+runway_selector_core = { path = "../runway_selector_core" }
+
+flate2 = { version = "1.1.6", default-features = false, features = ["rust_backend"] }
+hex = "0.4.3"
+reqwest = { workspace = true }
+semver = { version = "1.0.27", features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10.9"
+tar = "0.4.45"
+tempfile = "3.27.0"
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
