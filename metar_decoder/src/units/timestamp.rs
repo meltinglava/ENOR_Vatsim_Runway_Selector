@@ -102,7 +102,7 @@ mod tests {
     use jiff::civil::date;
 
     fn make_test_timestamp() -> Zoned {
-        date(2025, 06, 28)
+        date(2025, 6, 28)
             .at(16, 0, 0, 0)
             .to_zoned(TimeZone::UTC)
             .unwrap()
@@ -147,7 +147,7 @@ mod tests {
         let input = "291250Z";
         let mut day = make_test_timestamp();
         let expected = Timestamp::new(
-            date(2025, 05, 29)
+            date(2025, 5, 29)
                 .at(12, 50, 0, 0)
                 .to_zoned(day.time_zone().clone())
                 .unwrap(),
@@ -161,12 +161,12 @@ mod tests {
     #[test]
     fn test_metar_skips_invalid_previous_month() {
         let input = "291250Z";
-        let mut day = date(2026, 03, 22)
+        let mut day = date(2026, 3, 22)
             .at(16, 0, 0, 0)
             .to_zoned(TimeZone::UTC)
             .unwrap();
         let expected = Timestamp::new(
-            date(2026, 01, 29)
+            date(2026, 1, 29)
                 .at(12, 50, 0, 0)
                 .to_zoned(day.time_zone().clone())
                 .unwrap(),

@@ -1,18 +1,18 @@
 use std::str::FromStr;
 
 use futures::future::try_join_all;
+use indexmap::IndexSet;
 use metar_decoder::metar::Metar;
 use tracing_unwrap::ResultExt;
 
-use crate::{config::ESConfig, error::ApplicationResult};
+use crate::error::CoreResult;
 
-pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
-    let ignore = conf.get_ignore_airports();
-    let urls = [
-        "https://metar.vatsim.net/EN",
-        "https://metar.vatsim.net/ESKS",
-    ];
-
+/// Fetch METARs from the supplied VATSIM URLs and parse them.
+///
+/// `urls` are area-specific (e.g. `https://metar.vatsim.net/EN` for the
+/// Norwegian FIR). `ignore` skips any ICAO present in the set — typically
+/// airports known to publish unparseable reports.
+pub async fn get_metars(urls: &[&str], ignore: &IndexSet<String>) -> CoreResult<Vec<Metar>> {
     let pages = try_join_all(urls.iter().map(async |url| get_metars_from_url(url).await)).await?;
 
     let values = pages
@@ -26,7 +26,7 @@ pub async fn get_metars(conf: &ESConfig) -> ApplicationResult<Vec<Metar>> {
 }
 
 #[tracing::instrument]
-async fn get_metars_from_url(url: &str) -> ApplicationResult<String> {
+async fn get_metars_from_url(url: &str) -> CoreResult<String> {
     let retries = 3;
     let mut first_error = None;
     for i in 0..retries {

@@ -8,14 +8,14 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::{
     airport::Airport,
-    error::{ApplicationError, ApplicationResult},
+    error::{CoreError, CoreResult},
     runway::{Runway, RunwayDirection},
 };
 
-pub(crate) fn load_airports_from_sct_runway_section<R: Read>(
+pub fn load_airports_from_sct_runway_section<R: Read>(
     reader: &mut R,
     ignored_airports: &IndexSet<String>,
-) -> ApplicationResult<IndexMap<String, Airport>> {
+) -> CoreResult<IndexMap<String, Airport>> {
     let sct_file = read_with_encodings(reader)?;
     let mut airports = IndexMap::new();
 
@@ -60,7 +60,7 @@ pub(crate) fn load_airports_from_sct_runway_section<R: Read>(
     Ok(airports)
 }
 
-fn read_with_encodings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
+fn read_with_encodings<R: Read>(reader: &mut R) -> CoreResult<String> {
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;
 
@@ -70,6 +70,6 @@ fn read_with_encodings<R: Read>(reader: &mut R) -> ApplicationResult<String> {
         Ok(text) => Ok(text),
         Err(e) => ISO_8859_1
             .decode(&buffer, DecoderTrap::Strict)
-            .map_err(|_| ApplicationError::EncodingError(e.to_string())),
+            .map_err(|_| CoreError::Encoding(e.to_string())),
     }
 }

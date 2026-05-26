@@ -1,8 +1,7 @@
 use std::{
     borrow::Cow,
     ffi::OsStr,
-    fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    fs,
     path::{Path, PathBuf},
     sync::LazyLock,
     time::{Duration, SystemTime},
@@ -24,8 +23,6 @@ use tokio::{process::Command, time::sleep};
 use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
-
-use crate::{airport::RunwayInUseSource, airports::Airports, error::ApplicationResult};
 
 const DEFAULT_SECTOR_FILE_PREFIX: &str = "ENOR";
 
@@ -102,23 +99,6 @@ impl ESConfig {
     pub fn get_rwy_file_path(&self) -> PathBuf {
         self.euroscope_config_folder
             .join(format!("{}.rwy", self.sector_file_prefix))
-    }
-
-    pub fn write_runways_to_euroscope_rwy_file(
-        &self,
-        airports: &Airports,
-    ) -> ApplicationResult<()> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(false)
-            .truncate(false)
-            .open(self.get_rwy_file_path())?;
-
-        let start_of_file = read_active_airport(&mut file)?;
-        file.seek(SeekFrom::Start(0))?;
-        file.set_len(0)?;
-        write_runway_file(&mut file, airports, &start_of_file)
     }
 
     pub async fn run_apps(&self, euroscope_ready: bool) -> Vec<tokio::task::JoinHandle<()>> {
@@ -402,20 +382,6 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     None
 }
 
-#[allow(unstable_name_collisions)] // `intersperse_with` is but we can update itertools once it stabilizes
-pub fn read_active_airport<T: Read>(rwy_file: &mut T) -> io::Result<String> {
-    let reader = BufReader::new(rwy_file);
-
-    reader
-        .lines()
-        .take_while(|l| match l {
-            Ok(l) => l.starts_with("ACTIVE_AIRPORT:"),
-            Err(_) => false,
-        })
-        .intersperse_with(|| Ok("\n".to_string()))
-        .collect::<io::Result<String>>()
-}
-
 fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), ConfigError> {
     let config_dir = es_runway_selector_project_dir().config_dir().to_path_buf();
 
@@ -446,30 +412,6 @@ fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), Co
     } else {
         Ok((configurable, config_file))
     }
-}
-
-fn write_runway_file<T: Write>(
-    rwy_file: &mut T,
-    airports: &Airports,
-    start_of_file: &str,
-) -> ApplicationResult<()> {
-    let mut writer = BufWriter::new(rwy_file);
-    writeln!(writer, "{}", start_of_file)?;
-
-    for airport in airports.airports.values() {
-        if let Some(selection) = RunwayInUseSource::default_sort_order()
-            .iter()
-            .find_map(|method| airport.runways_in_use.get(method))
-        {
-            for (runway, usage) in selection {
-                for flag in usage.active_runway_flags() {
-                    writeln!(writer, "ACTIVE_RUNWAY:{}:{}:{}", airport.icao, runway, flag)?;
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn search_for_newest_sct_file() -> Option<(PathBuf, String)> {
@@ -562,34 +504,6 @@ fn systemtime_to_jiff_datetime(st: SystemTime) -> DateTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    impl ESConfig {
-        pub fn new_for_test() -> Self {
-            let config_file = PathBuf::from("config.toml");
-            let config: Configurable = Config::builder()
-                .add_source(config::File::from(config_file.clone()).required(true))
-                .build()
-                .expect("Failed to build configuration")
-                .try_deserialize::<Configurable>()
-                .expect("Failed to deserialize configuration");
-            Self {
-                euroscope_config_folder: PathBuf::from("/test/path"),
-                sector_file_prefix: "ENOR-Test".to_string(),
-                config,
-                config_file_path: config_file,
-                app_launchers: IndexSet::new(),
-            }
-        }
-    }
-
-    #[test]
-    fn test_read_active_airports() {
-        let data = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0\nACTIVE_RUNWAY:ENZV:18:1\nACTIVE_RUNWAY:ENZV:18:0\n";
-        let mut cursor = io::Cursor::new(data);
-        let result = read_active_airport(&mut cursor).unwrap();
-        let expected = "ACTIVE_AIRPORT:ENVA:1\nACTIVE_AIRPORT:ENBR:1\nACTIVE_AIRPORT:ENBO:0";
-        assert_eq!(result, expected);
-    }
 
     #[test]
     fn test_get_sector_file_name() {

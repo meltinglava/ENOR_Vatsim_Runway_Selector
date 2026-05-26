@@ -1,12 +1,5 @@
-pub(crate) mod airport;
-pub(crate) mod airports;
-pub(crate) mod atis_parser;
 pub(crate) mod config;
 pub(crate) mod error;
-pub(crate) mod metar;
-pub(crate) mod runway;
-pub(crate) mod sector_file;
-pub(crate) mod util;
 
 use std::{
     fs::File,
@@ -15,11 +8,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use airports::Airports;
 use clap::Parser;
 use config::ESConfig;
 use error::ApplicationResult;
 use jiff::{Zoned, tz::TimeZone};
+use runway_selector_core::{Airports, output::write_runways_to_rwy_file};
 use self_update::{
     Status::{UpToDate, Updated},
     cargo_crate_version,
@@ -28,6 +21,13 @@ use tracing::{info, trace, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use tracing_unwrap::{OptionExt, ResultExt};
+
+/// VATSIM METAR sources for the ENOR area. Moves to per-area `area.toml` in a
+/// later phase, once area packages exist.
+const METAR_URLS: &[&str] = &[
+    "https://metar.vatsim.net/EN",
+    "https://metar.vatsim.net/ESKS",
+];
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -91,14 +91,14 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
     });
     let mut airports = Airports::new();
     let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
-    airports.load_airports_from_sector_file(&mut sct_file, &config)?;
-    airports.add_metars(&config).await;
+    airports.load_airports_from_sector_file(&mut sct_file, config.get_ignore_airports())?;
+    airports
+        .add_metars(METAR_URLS, config.get_ignore_airports())
+        .await;
     airports.read_atis_and_apply_runways().await.unwrap();
-    airports.select_runway_in_use(&config);
+    airports.select_runway_in_use(config.get_default_runways());
     airports.sort();
-    config
-        .write_runways_to_euroscope_rwy_file(&airports)
-        .unwrap_or_log();
+    write_runways_to_rwy_file(&config.get_rwy_file_path(), &airports).unwrap_or_log();
     let task2 = tokio::spawn(async move {
         let handles = config.run_apps(true).await;
         for handle in handles {

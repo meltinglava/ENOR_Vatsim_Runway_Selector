@@ -11,9 +11,8 @@ use std::{
 
 use crate::{
     airport::{Airport, CrosswindDirection, RunwayInUseSource, RunwayWindComponents},
-    atis_parser::find_runway_in_use_from_atis,
-    config::ESConfig,
-    error::ApplicationResult,
+    atis::find_runway_in_use_from_atis,
+    error::CoreResult,
     metar::get_metars,
     runway::{RunwayDirection, RunwayUse},
     sector_file::load_airports_from_sct_runway_section,
@@ -49,6 +48,12 @@ enum CrosswindDisplay {
     Variable(i32),
 }
 
+impl Default for Airports {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Airports {
     pub fn new() -> Self {
         Self {
@@ -64,10 +69,9 @@ impl Airports {
     pub fn load_airports_from_sector_file<R: Read>(
         &mut self,
         reader: &mut R,
-        config: &ESConfig,
-    ) -> ApplicationResult<()> {
-        let parsed_airports =
-            load_airports_from_sct_runway_section(reader, config.get_ignore_airports())?;
+        ignored_airports: &IndexSet<String>,
+    ) -> CoreResult<()> {
+        let parsed_airports = load_airports_from_sct_runway_section(reader, ignored_airports)?;
 
         for (icao, mut airport) in parsed_airports {
             match self.airports.entry(icao) {
@@ -82,8 +86,8 @@ impl Airports {
         Ok(())
     }
 
-    pub async fn add_metars(&mut self, conf: &ESConfig) {
-        let metars = get_metars(conf).await.unwrap_or_log();
+    pub async fn add_metars(&mut self, metar_urls: &[&str], ignore: &IndexSet<String>) {
+        let metars = get_metars(metar_urls, ignore).await.unwrap_or_log();
         for metar in metars {
             if let Some(airport) = self.airports.get_mut(&metar.icao) {
                 airport.metar = Some(metar);
@@ -91,7 +95,7 @@ impl Airports {
         }
     }
 
-    pub async fn read_atis_and_apply_runways(&mut self) -> ApplicationResult<()> {
+    pub async fn read_atis_and_apply_runways(&mut self) -> CoreResult<()> {
         let icaos = self.identifiers();
         let v3_data = vatsim_utils::live_api::Vatsim::new()
             .await?
@@ -126,15 +130,16 @@ impl Airports {
         Ok(())
     }
 
-    pub fn select_runway_in_use(&mut self, config: &ESConfig) {
-        self.runway_in_use_based_on_metar(config);
-        self.apply_default_runways(config);
+    pub fn select_runway_in_use(&mut self, default_runways: &IndexMap<String, u8>) {
+        self.runway_in_use_based_on_metar(default_runways);
+        self.apply_default_runways(default_runways);
     }
 
-    fn runway_in_use_based_on_metar(&mut self, config: &ESConfig) {
+    fn runway_in_use_based_on_metar(&mut self, default_runways: &IndexMap<String, u8>) {
         for airport in self.airports.values_mut() {
             if airport.icao == "ENGM" {
-                let (source, runway_in_use) = airport.set_runway_for_engm(config).unwrap_or_log();
+                let (source, runway_in_use) =
+                    airport.set_runway_for_engm(default_runways).unwrap_or_log();
                 airport.runways_in_use.insert(source, runway_in_use);
             } else if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind()
                 && !runways_in_use.is_empty()
@@ -146,14 +151,13 @@ impl Airports {
         }
     }
 
-    fn apply_default_runways(&mut self, config: &ESConfig) {
-        let defaults = config.get_default_runways();
+    fn apply_default_runways(&mut self, default_runways: &IndexMap<String, u8>) {
         for airport in self.airports.values_mut() {
             let default_entry = airport.runways_in_use.entry(RunwayInUseSource::Default);
             match default_entry {
                 indexmap::map::Entry::Occupied(_) => continue,
                 indexmap::map::Entry::Vacant(v) => {
-                    if let Some(runway) = defaults.get(airport.icao.as_str()) {
+                    if let Some(runway) = default_runways.get(airport.icao.as_str()) {
                         let identifier = format!("{runway:02}");
                         if airport.runways.iter().any(|rw| {
                             rw.runways
@@ -656,12 +660,28 @@ pub(crate) mod tests {
 
     use super::*;
 
+    fn test_default_runways() -> IndexMap<String, u8> {
+        IndexMap::from([("ENGM".to_string(), 1u8)])
+    }
+
+    fn test_ignored_airports() -> IndexSet<String> {
+        [
+            "ENAE", "ENAS", "ENAX", "ENBB", "ENBM", "ENDI", "ENDO", "ENEG", "ENEN", "ENFG", "ENFY",
+            "ENGK", "ENGN", "ENGS", "ENHA", "ENHS", "ENHT", "ENJA", "ENJB", "ENKJ", "ENKL", "ENLB",
+            "ENLI", "ENLU", "ENLV", "ENMO", "ENOP", "ENRE", "ENRG", "ENRI", "ENRK", "ENSI", "ENSN",
+            "ENSU", "ENTS", "ENTY", "ENUL", "ENVE", "ENQC", "ENQR", "ENOA",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    }
+
     #[test]
     fn test_airport_gen() {
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
-        let config = ESConfig::new_for_test();
-        ap.load_airports_from_sector_file(&mut reader, &config)
+        let ignored = test_ignored_airports();
+        ap.load_airports_from_sector_file(&mut reader, &ignored)
             .unwrap();
         assert_eq!(ap.airports.len(), 50);
     }
@@ -670,8 +690,8 @@ pub(crate) mod tests {
         let icao = metar_str[0..4].to_string();
         let mut ap = Airports::new();
         let mut reader = std::io::Cursor::new(include_str!("../runway.test"));
-        let config = ESConfig::new_for_test();
-        ap.load_airports_from_sector_file(&mut reader, &config)
+        let ignored = test_ignored_airports();
+        ap.load_airports_from_sector_file(&mut reader, &ignored)
             .unwrap();
         let airport = ap.airports.swap_remove(&icao).unwrap();
         let metar: Metar = metar_str.parse().unwrap();
@@ -687,8 +707,7 @@ pub(crate) mod tests {
         let ap = make_test_airport(metar);
         let mut aps = Airports::new();
         aps.add_airport(ap);
-        let config = ESConfig::new_for_test();
-        aps.select_runway_in_use(&config);
+        aps.select_runway_in_use(&test_default_runways());
         aps.airports.pop().unwrap().1
     }
 

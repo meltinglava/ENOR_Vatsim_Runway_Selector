@@ -13,8 +13,7 @@ use metar_decoder::{
 };
 
 use crate::{
-    config::ESConfig,
-    error::{ApplicationError, ApplicationResult},
+    error::{CoreError, CoreResult},
     runway::{Runway, RunwayDirection, RunwayUse},
     util::diff_angle,
 };
@@ -101,14 +100,14 @@ impl Airport {
         Self::calculate_max_crosswind_from_wind(runway_direction, &metar.wind)
     }
 
-    pub fn set_runway_based_on_metar_wind(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
+    pub fn set_runway_based_on_metar_wind(&self) -> CoreResult<IndexMap<String, RunwayUse>> {
         if self.icao == "ENGM" {
             unreachable!("ENGM should be dealt with before reaching this step")
         } else if self.icao == "ENZV" {
             self.set_runway_for_enzv()
         } else if self.runways.len() == 1 {
             self.internal_set_runway_based_on_metar_wind(0)
-                .ok_or(ApplicationError::NoRunwayToSet)
+                .ok_or(CoreError::NoRunwayToSet)
         } else {
             unreachable!(
                 "Airport {} has multiple runways, but no specific logic implemented for it",
@@ -158,10 +157,10 @@ impl Airport {
         None
     }
 
-    pub(crate) fn set_runway_for_engm(
+    pub fn set_runway_for_engm(
         &self,
-        config: &ESConfig,
-    ) -> ApplicationResult<(RunwayInUseSource, IndexMap<String, RunwayUse>)> {
+        default_runways: &IndexMap<String, u8>,
+    ) -> CoreResult<(RunwayInUseSource, IndexMap<String, RunwayUse>)> {
         let source;
         let runway_direction: String = match self.internal_set_runway_based_on_metar_wind(0) {
             Some(map) => {
@@ -170,8 +169,7 @@ impl Airport {
             }
             None => {
                 source = RunwayInUseSource::Default;
-                config
-                    .get_default_runways()
+                default_runways
                     .get(&self.icao)
                     .map(|&rwy| format!("{:02}", rwy))
                     .unwrap_or_else(|| "01".to_string()) // Default to 01 if no default is set
@@ -294,7 +292,7 @@ impl Airport {
         Ok((source, map))
     }
 
-    fn set_runway_for_enzv(&self) -> ApplicationResult<IndexMap<String, RunwayUse>> {
+    fn set_runway_for_enzv(&self) -> CoreResult<IndexMap<String, RunwayUse>> {
         let main_runway_index = self
             .runways
             .iter()

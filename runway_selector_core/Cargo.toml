@@ -1,0 +1,30 @@
+[package]
+name = "runway_selector_core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Area-agnostic runway-selection logic for es_runway_selector"
+
+[dependencies]
+askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
+encoding = "0.2.33"
+futures = { workspace = true }
+indexmap = { workspace = true }
+itertools = { workspace = true }
+jiff = { workspace = true }
+metar_decoder = { path = "../metar_decoder" }
+nom = { workspace = true }
+open = "5.3.5"
+regex = "1.12.3"
+reqwest = { workspace = true }
+tempfile = "3.27.0"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-unwrap = { workspace = true }
+vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tracing-test = { workspace = true }
