@@ -17,6 +17,8 @@ pub enum CoreError {
     MetarParse(#[from] nom::error::Error<String>),
     #[error("Failed to decode sector file (tried UTF-8 and ISO-8859-1): {0}")]
     Encoding(String),
+    #[error("Failed to parse area configuration: {0}")]
+    AreaConfig(String),
     #[error("Time error: {0}")]
     Time(#[from] jiff::Error),
     #[error("No runway to set based on wind")]

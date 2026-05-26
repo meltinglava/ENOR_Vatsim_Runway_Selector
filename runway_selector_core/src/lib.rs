@@ -17,6 +17,7 @@
 
 pub mod airport;
 pub mod airports;
+pub mod area_config;
 pub mod atis;
 pub mod error;
 pub mod metar;
@@ -27,5 +28,9 @@ pub mod util;
 
 pub use airport::{Airport, CrosswindDirection, RunwayInUseSource, RunwayWindComponents};
 pub use airports::Airports;
+pub use area_config::{
+    AreaConfig, AreaManifest, ProfileConfig, Runtime, TopLevelConfig, load_area_config,
+    load_area_manifest, load_profile_config, merge_local_overrides,
+};
 pub use error::{CoreError, CoreResult};
 pub use runway::{Runway, RunwayDirection, RunwayUse};
