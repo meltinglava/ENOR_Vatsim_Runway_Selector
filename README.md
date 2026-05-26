@@ -1,13 +1,31 @@
-# ENOR runway selector
+# Runway selector
 
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/meltinglava/ENOR_Vatsim_Runway_Selector/main.svg)](https://results.pre-commit.ci/latest/github/meltinglava/ENOR_Vatsim_Runway_Selector/main)
 
 This application is a work in progress.
 
-It will be used to set default runways for euroscope in Norway. Do not rely on
-this for any real world operation.
+It sets default runways for EuroScope on VATSIM. Originally built for the
+Polaris area (Norway/ENOR), now mid-migration to a multi-area design where
+per-FIR runway-selection logic ships as installable area plugins
+(`area_enor` is the first one). **Do not rely on this for any real world
+operation.**
 
 This is based on a lot of work by [Adrian2k](https://github.com/Adrian2k/ENOR-autorwy)
+
+## Areas
+
+Areas are managed via the `area` subcommand:
+
+```bash
+es_runway_selector area available           # list installable areas
+es_runway_selector area install enor        # install one
+es_runway_selector area list                # list installed areas
+es_runway_selector area profile list        # list per-area profiles
+```
+
+User overrides go in `<area>/area.local.toml` (and
+`<area>/profiles/<name>.local.toml`); those files are never touched by
+area updates.
 
 ## App launcher
 

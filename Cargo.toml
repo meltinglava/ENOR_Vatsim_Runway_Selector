@@ -16,7 +16,7 @@ authors = ["meltinglava"]
 version = "0.0.1-alpha.53"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Package for automaticly selecting runways for Euroscope in Polaris area"
+description = "Automatic runway selection for EuroScope, with per-FIR area plugins talking over gRPC"
 repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
 
 [workspace.dependencies]
