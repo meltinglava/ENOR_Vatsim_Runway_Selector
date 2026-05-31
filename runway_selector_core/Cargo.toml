@@ -17,8 +17,10 @@ jiff = { workspace = true }
 metar_decoder = { path = "../metar_decoder" }
 nom = { workspace = true }
 open = "5.3.5"
+prost-types = { workspace = true }
 regex = "1.12.3"
 reqwest = { workspace = true }
+runway_selector_protocol = { path = "../runway_selector_protocol" }
 semver = { version = "1.0.27", features = ["serde"] }
 serde = { workspace = true }
 serde_with = { workspace = true }

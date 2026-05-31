@@ -22,6 +22,7 @@ pub mod atis;
 pub mod error;
 pub mod metar;
 pub mod output;
+pub mod proto_convert;
 pub mod runway;
 pub mod sector_file;
 pub mod util;

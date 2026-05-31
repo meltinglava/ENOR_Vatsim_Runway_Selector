@@ -23,6 +23,10 @@ impl Timestamp {
     pub fn new(timestamp: Zoned) -> Self {
         Timestamp { timestamp }
     }
+
+    pub fn zoned(&self) -> &Zoned {
+        &self.timestamp
+    }
 }
 
 impl Display for Timestamp {
