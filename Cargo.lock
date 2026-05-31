@@ -96,6 +96,8 @@ name = "area_enor"
 version = "0.0.1-alpha.53"
 dependencies = [
  "clap",
+ "indexmap 2.14.0",
+ "jiff",
  "prost",
  "prost-types",
  "runway_selector_core",
