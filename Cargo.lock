@@ -100,7 +100,7 @@ dependencies = [
  "jiff",
  "prost",
  "prost-types",
- "runway_selector_core",
+ "runway_selector_area_config",
  "runway_selector_protocol",
  "thiserror 2.0.18",
  "tokio",
@@ -760,6 +760,7 @@ dependencies = [
 name = "es_runway_selector"
 version = "0.0.1-alpha.53"
 dependencies = [
+ "anyhow",
  "clap",
  "config",
  "directories",
@@ -769,12 +770,14 @@ dependencies = [
  "prost-types",
  "regex",
  "rfd",
+ "runway_selector_area_config",
  "runway_selector_areas",
  "runway_selector_core",
  "runway_selector_plugin_host",
  "runway_selector_protocol",
  "rustls",
  "self_update",
+ "semver",
  "serde",
  "serde_with",
  "sysinfo",
@@ -2329,13 +2332,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "runway_selector_area_config"
+version = "0.0.1-alpha.53"
+dependencies = [
+ "indexmap 2.14.0",
+ "semver",
+ "serde",
+ "serde_with",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
 name = "runway_selector_areas"
 version = "0.0.1-alpha.53"
 dependencies = [
  "flate2",
  "hex",
  "reqwest 0.13.3",
- "runway_selector_core",
+ "runway_selector_area_config",
  "semver",
  "serde",
  "serde_json",
@@ -2363,14 +2379,13 @@ dependencies = [
  "prost-types",
  "regex",
  "reqwest 0.13.3",
+ "runway_selector_area_config",
  "runway_selector_protocol",
- "semver",
  "serde",
  "serde_with",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "toml",
  "tracing",
  "tracing-test",
  "tracing-unwrap",
@@ -2381,6 +2396,7 @@ dependencies = [
 name = "runway_selector_plugin_host"
 version = "0.0.1-alpha.53"
 dependencies = [
+ "libc",
  "runway_selector_core",
  "runway_selector_protocol",
  "semver",

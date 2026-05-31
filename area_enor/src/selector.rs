@@ -19,7 +19,7 @@
 use std::cmp::Reverse;
 
 use jiff::{Timestamp as JiffTimestamp, Zoned, tz::TimeZone};
-use runway_selector_core::area_config::AreaConfig;
+use runway_selector_area_config::AreaConfig;
 use runway_selector_protocol::v1::{
     AirportRequest, AirportSelection, GetAirportsResponse, Metar, RunwayAssignment, RunwayInfo,
     RunwayUse, SelectRunwaysRequest, SelectRunwaysResponse, SelectionSource, WeatherDescriptor,

@@ -1,20 +1,16 @@
 //! Drive an area plugin over gRPC.
 //!
-//! Looks up the requested installed area, spawns its subprocess via
-//! [`runway_selector_plugin_host`], calls `SelectRunways` for every airport
-//! the plugin claims, and writes the returned selections back onto
-//! [`Airports`] using the appropriate [`RunwayInUseSource`].
+//! Spawns the area's subprocess via [`runway_selector_plugin_host`], calls
+//! `SelectRunways` for every airport the plugin claims, and writes the
+//! returned selections back onto [`Airports`] using the appropriate
+//! [`RunwayInUseSource`].
 
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::time::SystemTime;
 
+use anyhow::{Context, Result};
 use indexmap::IndexMap;
-use runway_selector_areas::list_installed_areas;
 use runway_selector_core::{
     Airports, RunwayInUseSource,
-    area_config::{AreaManifest, load_area_config},
     proto_convert::{airport_to_request, runway_use_from_proto, selection_source_from_proto},
     runway::RunwayUse,
 };
@@ -23,45 +19,53 @@ use runway_selector_protocol::v1::{
     AirportSelection, RunwayUse as ProtoRunwayUse, SelectRunwaysRequest, SelectionSource,
     runway_selector_client::RunwaySelectorClient,
 };
+use self_update::cargo_crate_version;
+use semver::Version;
 use tracing::{info, warn};
 
-use crate::error::ApplicationResult;
+use crate::area_runtime::InstalledArea;
 
-/// Find an installed area by name. Returns `Ok(None)` if no area with that
-/// name is installed.
-pub fn find_installed_area(
-    install_dir: &Path,
-    name: &str,
-) -> ApplicationResult<Option<(PathBuf, AreaManifest)>> {
-    let installed = list_installed_areas(install_dir)?;
-    Ok(installed.into_iter().find(|(_, m)| m.name == name))
+/// Current host version, used for the plugin's `min_core_version` check.
+fn host_version() -> Version {
+    cargo_crate_version!()
+        .parse()
+        .expect("CARGO_PKG_VERSION is always a valid semver")
 }
 
-/// Spawn the area's plugin, ask it which ICAOs it owns, send a
-/// `SelectRunways` request for those airports, and write the returned
-/// selections into `airports.runways_in_use`. The plugin handle is shut
-/// down before returning on the happy path.
-pub async fn run_area_selection(
-    airports: &mut Airports,
-    area_dir: &Path,
-    manifest: &AreaManifest,
-) -> ApplicationResult<()> {
-    let area_config = load_area_config(area_dir)?;
+/// Spawn `area`'s plugin, ask it which ICAOs it owns, send a `SelectRunways`
+/// request for those airports, and write the returned selections into
+/// `airports.runways_in_use`. The plugin handle is shut down before
+/// returning on the happy path; on error the handle is dropped, which
+/// SIGKILLs the child via `kill_on_drop`.
+pub async fn run_area_selection(airports: &mut Airports, area: &InstalledArea) -> Result<()> {
+    info!(name = %area.manifest.name, version = %area.manifest.version, "Spawning area plugin");
+    let handle = spawn_plugin(&area.manifest, &area.area_dir, &host_version())
+        .await
+        .with_context(|| format!("Spawning area plugin {}", area.manifest.name))?;
 
-    info!(name = %manifest.name, version = %manifest.version, "Spawning area plugin");
-    let handle = spawn_plugin(manifest, area_dir).await?;
-
-    drive_plugin(airports, handle, area_config.time_zone.as_deref()).await
+    drive_plugin(
+        airports,
+        handle,
+        area.config.time_zone.as_deref(),
+        &area.manifest.name,
+    )
+    .await
 }
 
 async fn drive_plugin(
     airports: &mut Airports,
     handle: PluginHandle,
     area_time_zone: Option<&str>,
-) -> ApplicationResult<()> {
+    area_name: &str,
+) -> Result<()> {
     let mut client = RunwaySelectorClient::new(handle.channel.clone());
 
-    let claimed: Vec<String> = client.get_airports(()).await?.into_inner().icaos;
+    let claimed: Vec<String> = client
+        .get_airports(())
+        .await
+        .with_context(|| format!("Calling GetAirports on plugin {area_name}"))?
+        .into_inner()
+        .icaos;
     let area_timezone = area_time_zone.unwrap_or("UTC").to_string();
 
     let request_airports = claimed
@@ -89,10 +93,16 @@ async fn drive_plugin(
         airports: request_airports,
     };
 
-    let response = client.select_runways(req).await?.into_inner();
+    let response = client
+        .select_runways(req)
+        .await
+        .with_context(|| format!("Calling SelectRunways on plugin {area_name}"))?
+        .into_inner();
     apply_selections(airports, response.selections);
 
-    let _ = handle.shutdown().await;
+    if let Err(e) = handle.shutdown().await {
+        warn!(area = %area_name, error = ?e, "Plugin shutdown returned an error");
+    }
     Ok(())
 }
 

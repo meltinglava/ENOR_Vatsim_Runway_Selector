@@ -8,20 +8,28 @@
 //!
 //! Once the child is alive, we wait until its
 //! `grpc.health.v1.Health/Check` reports `SERVING` and then hand back a
-//! [`PluginHandle`] holding the channel.
+//! [`PluginHandle`] holding the channel. The handle owns the child: dropping
+//! it without calling [`PluginHandle::shutdown`] still kills the subprocess
+//! best-effort so a host panic does not leak processes.
 
 use std::{
     net::TcpListener,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     time::Duration,
 };
 
 use std::io;
 
 use runway_selector_core::area_config::{AreaManifest, Runtime};
+use semver::Version;
 use thiserror::Error;
-use tokio::{process::Child, time::sleep};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::{Child, ChildStderr, ChildStdout},
+    task::JoinHandle,
+    time::sleep,
+};
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::{
     HealthCheckRequest, health_check_response::ServingStatus, health_client::HealthClient,
@@ -31,6 +39,8 @@ use tonic_health::pb::{
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Hard ceiling on how long we wait for a plugin to report `SERVING`.
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Time between SIGTERM and the fallback SIGKILL during graceful shutdown.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum PluginError {
@@ -48,31 +58,115 @@ pub enum PluginError {
     Health(#[from] tonic::Status),
     #[error("Timed out after {0:?} waiting for plugin to report SERVING")]
     StartupTimeout(Duration),
+    #[error(
+        "Plugin {area_name:?} exited during startup with {status} before reporting SERVING.{stderr_hint}",
+        stderr_hint = stderr_hint(stderr_tail)
+    )]
+    StartupExit {
+        area_name: String,
+        status: ExitStatus,
+        stderr_tail: String,
+    },
+    #[error("Plugin {area_name:?} requires host version >= {required} but this host is {current}")]
+    IncompatibleHostVersion {
+        area_name: String,
+        required: Version,
+        current: Version,
+    },
+}
+
+fn stderr_hint(stderr_tail: &str) -> String {
+    let trimmed = stderr_tail.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(" Plugin stderr (tail):\n{trimmed}")
+    }
 }
 
 pub type PluginResult<T> = Result<T, PluginError>;
 
-/// A live plugin subprocess plus the gRPC channel to it. Drop semantics:
-/// dropping a `PluginHandle` only releases the channel — call
-/// [`PluginHandle::shutdown`] explicitly to terminate the child.
+/// A live plugin subprocess plus the gRPC channel to it.
+///
+/// The handle owns the child process and the tasks forwarding its stdio into
+/// `tracing`. Dropping the handle kills the child best-effort with SIGKILL;
+/// prefer [`PluginHandle::shutdown`] for a graceful SIGTERM-then-SIGKILL exit.
 pub struct PluginHandle {
     pub area_name: String,
     pub port: u16,
     pub channel: Channel,
-    pub child: Child,
+    child: Option<Child>,
+    stdout_task: Option<JoinHandle<()>>,
+    stderr_task: Option<JoinHandle<()>>,
 }
 
 impl PluginHandle {
-    /// Gracefully terminate the child: send SIGTERM (or `kill` on Windows),
-    /// wait, and return the exit status.
-    pub async fn shutdown(mut self) -> PluginResult<std::process::ExitStatus> {
-        // tokio::process::Child::kill sends SIGKILL on Unix; SIGTERM would be
-        // nicer but requires unsafe libc on stable. Keep it simple — areas
-        // are expected to handle abrupt termination since this is a desktop
-        // tool the user can close at any time.
-        self.child.start_kill()?;
-        Ok(self.child.wait().await?)
+    /// Gracefully terminate the child: send SIGTERM (or `start_kill` on
+    /// Windows), wait up to [`SHUTDOWN_GRACE`], then SIGKILL on timeout.
+    pub async fn shutdown(mut self) -> PluginResult<ExitStatus> {
+        let Some(mut child) = self.child.take() else {
+            return Err(PluginError::Io(io::Error::other(
+                "PluginHandle already shut down",
+            )));
+        };
+
+        send_graceful_terminate(&child);
+
+        let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+            Ok(res) => res?,
+            Err(_) => {
+                tracing::warn!(
+                    area = %self.area_name,
+                    "Plugin did not exit within {:?} of SIGTERM; sending SIGKILL",
+                    SHUTDOWN_GRACE
+                );
+                child.start_kill()?;
+                child.wait().await?
+            }
+        };
+
+        if let Some(t) = self.stdout_task.take() {
+            let _ = t.await;
+        }
+        if let Some(t) = self.stderr_task.take() {
+            let _ = t.await;
+        }
+        Ok(status)
     }
+}
+
+impl Drop for PluginHandle {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            // shutdown() wasn't called — fall back to SIGKILL so a host panic
+            // does not leak the subprocess. tokio's Child does not kill on
+            // drop by default; we set `kill_on_drop(true)` on the command too
+            // as a belt-and-braces.
+            let _ = child.start_kill();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn send_graceful_terminate(child: &Child) {
+    let Some(pid) = child.id() else {
+        return;
+    };
+    // SAFETY: libc::kill is a thin wrapper around the kill(2) syscall. The
+    // PID came from a Child we own; SIGTERM is a signal number constant.
+    let pid_signed = pid as i32;
+    let result = unsafe { libc::kill(pid_signed, libc::SIGTERM) };
+    if result != 0 {
+        let err = io::Error::last_os_error();
+        tracing::debug!(pid = pid_signed, error = ?err, "SIGTERM to plugin failed");
+    }
+}
+
+#[cfg(not(unix))]
+fn send_graceful_terminate(_child: &Child) {
+    // On Windows there is no SIGTERM; the SIGKILL fallback in `shutdown` is
+    // the only termination path. Plugins on Windows should treat the channel
+    // closing as the shutdown signal.
 }
 
 /// Build (but do not yet spawn) the command that runs a plugin's entry
@@ -112,7 +206,10 @@ pub fn build_command(
     cmd.env("RUNWAY_SELECTOR_PORT", port.to_string())
         .env("RUNWAY_SELECTOR_AREA_DIR", area_dir)
         .current_dir(area_dir)
-        .stdin(Stdio::null());
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
     Ok(cmd)
 }
@@ -132,36 +229,118 @@ pub fn pick_free_port() -> PluginResult<u16> {
     Ok(port)
 }
 
+/// Check that the manifest's `min_core_version` (if any) is satisfied by the
+/// supplied host version. Pure — no I/O. Returns
+/// [`PluginError::IncompatibleHostVersion`] when the host is too old.
+pub fn check_host_compatibility(
+    manifest: &AreaManifest,
+    host_version: &Version,
+) -> PluginResult<()> {
+    let Some(required) = manifest.min_core_version.as_ref() else {
+        return Ok(());
+    };
+    if host_version < required {
+        return Err(PluginError::IncompatibleHostVersion {
+            area_name: manifest.name.clone(),
+            required: required.clone(),
+            current: host_version.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// Spawn the plugin, wait for `grpc.health.v1` to report `SERVING`, and
 /// return the handle. Uses [`DEFAULT_STARTUP_TIMEOUT`] for the health wait.
-pub async fn spawn_plugin(manifest: &AreaManifest, area_dir: &Path) -> PluginResult<PluginHandle> {
-    spawn_plugin_with_timeout(manifest, area_dir, DEFAULT_STARTUP_TIMEOUT).await
+///
+/// Verifies `manifest.min_core_version` against `host_version` before
+/// spawning — an incompatible plugin is reported, not run.
+pub async fn spawn_plugin(
+    manifest: &AreaManifest,
+    area_dir: &Path,
+    host_version: &Version,
+) -> PluginResult<PluginHandle> {
+    spawn_plugin_with_timeout(manifest, area_dir, host_version, DEFAULT_STARTUP_TIMEOUT).await
 }
 
 pub async fn spawn_plugin_with_timeout(
     manifest: &AreaManifest,
     area_dir: &Path,
+    host_version: &Version,
     startup_timeout: Duration,
 ) -> PluginResult<PluginHandle> {
+    check_host_compatibility(manifest, host_version)?;
+
     let port = pick_free_port()?;
     let mut cmd = build_command(manifest, area_dir, port)?;
-    let child = cmd.spawn()?;
+    let mut child = cmd.spawn()?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let area_name = manifest.name.clone();
+    let stderr_tail = StderrTail::default();
+
+    let stdout_task = stdout.map(|s| spawn_stdout_forwarder(area_name.clone(), s));
+    let stderr_task =
+        stderr.map(|s| spawn_stderr_forwarder(area_name.clone(), s, stderr_tail.clone()));
 
     let endpoint: Endpoint = format!("http://127.0.0.1:{port}").parse()?;
-    let channel = wait_for_serving(endpoint, startup_timeout).await?;
+
+    let channel = match wait_for_serving(&mut child, endpoint, startup_timeout).await {
+        Ok(channel) => channel,
+        Err(PluginError::StartupExit {
+            area_name: name,
+            status,
+            stderr_tail: _,
+        }) => {
+            // Drain captured stderr to attach to the error before returning.
+            if let Some(t) = stderr_task {
+                let _ = t.await;
+            }
+            if let Some(t) = stdout_task {
+                let _ = t.await;
+            }
+            return Err(PluginError::StartupExit {
+                area_name: name,
+                status,
+                stderr_tail: stderr_tail.snapshot(),
+            });
+        }
+        Err(other) => {
+            // Best-effort cleanup; child is killed by kill_on_drop when
+            // `child` is dropped at function-return.
+            let _ = child.start_kill();
+            return Err(other);
+        }
+    };
 
     Ok(PluginHandle {
-        area_name: manifest.name.clone(),
+        area_name,
         port,
         channel,
-        child,
+        child: Some(child),
+        stdout_task,
+        stderr_task,
     })
 }
 
-async fn wait_for_serving(endpoint: Endpoint, timeout: Duration) -> PluginResult<Channel> {
+async fn wait_for_serving(
+    child: &mut Child,
+    endpoint: Endpoint,
+    timeout: Duration,
+) -> PluginResult<Channel> {
     let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
+        // First check whether the child has exited — `try_wait` is
+        // non-blocking. If it has, polling the port is hopeless.
+        if let Some(status) = child.try_wait()? {
+            return Err(PluginError::StartupExit {
+                area_name: String::new(),
+                status,
+                stderr_tail: String::new(),
+            });
+        }
+
         if let Ok(channel) = endpoint.connect().await {
             let mut client = HealthClient::new(channel.clone());
             match client
@@ -182,6 +361,69 @@ async fn wait_for_serving(endpoint: Endpoint, timeout: Duration) -> PluginResult
         }
         sleep(HEALTH_POLL_INTERVAL).await;
     }
+}
+
+/// A ring-buffered tail of the child's stderr, used to attach diagnostic
+/// context to startup-failure errors. Cheaply cloneable.
+#[derive(Clone, Default)]
+struct StderrTail {
+    inner: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+}
+
+impl StderrTail {
+    const CAPACITY: usize = 20;
+
+    fn push(&self, line: String) {
+        let mut g = self.inner.lock().unwrap();
+        if g.len() == Self::CAPACITY {
+            g.pop_front();
+        }
+        g.push_back(line);
+    }
+
+    fn snapshot(&self) -> String {
+        let g = self.inner.lock().unwrap();
+        g.iter().cloned().collect::<Vec<_>>().join("\n")
+    }
+}
+
+fn spawn_stdout_forwarder(area_name: String, stdout: ChildStdout) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout).lines();
+        loop {
+            match reader.next_line().await {
+                Ok(Some(line)) => tracing::info!(target: "plugin", area = %area_name, "{line}"),
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!(area = %area_name, error = ?e, "Error reading plugin stdout");
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn spawn_stderr_forwarder(
+    area_name: String,
+    stderr: ChildStderr,
+    tail: StderrTail,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr).lines();
+        loop {
+            match reader.next_line().await {
+                Ok(Some(line)) => {
+                    tracing::warn!(target: "plugin", area = %area_name, "{line}");
+                    tail.push(line);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!(area = %area_name, error = ?e, "Error reading plugin stderr");
+                    break;
+                }
+            }
+        }
+    })
 }
 
 /// Return true if `mise` is on `PATH`. Useful for the first-run wizard so we
@@ -290,5 +532,26 @@ mod tests {
                 runtime: Runtime::Python
             }
         ));
+    }
+
+    #[test]
+    fn host_compatibility_passes_when_no_minimum_declared() {
+        let manifest = dummy_manifest("x", Runtime::Rust, "x");
+        check_host_compatibility(&manifest, &Version::new(0, 0, 1)).unwrap();
+    }
+
+    #[test]
+    fn host_compatibility_passes_when_current_satisfies_minimum() {
+        let mut manifest = dummy_manifest("x", Runtime::Rust, "x");
+        manifest.min_core_version = Some(Version::new(1, 0, 0));
+        check_host_compatibility(&manifest, &Version::new(1, 2, 3)).unwrap();
+    }
+
+    #[test]
+    fn host_compatibility_fails_when_current_too_old() {
+        let mut manifest = dummy_manifest("x", Runtime::Rust, "x");
+        manifest.min_core_version = Some(Version::new(2, 0, 0));
+        let err = check_host_compatibility(&manifest, &Version::new(1, 9, 9)).unwrap_err();
+        assert!(matches!(err, PluginError::IncompatibleHostVersion { .. }));
     }
 }

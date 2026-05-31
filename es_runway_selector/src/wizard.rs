@@ -8,14 +8,10 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
+use runway_selector_area_config::{AreaManifest, ProfileConfig, load_profile_config};
 use runway_selector_areas::list_installed_areas;
-use runway_selector_core::{
-    AreaManifest,
-    area_config::{ProfileConfig, load_profile_config},
-};
 use tracing::info;
-
-use crate::error::ApplicationResult;
 
 /// Returned by [`detect_setup_state`] — what the user needs to do next.
 #[derive(Debug, PartialEq, Eq)]
@@ -34,8 +30,9 @@ pub enum SetupState {
 pub fn detect_setup_state(
     install_dir: &Path,
     sector_file_prefix: Option<&str>,
-) -> ApplicationResult<SetupState> {
-    let installed = list_installed_areas(install_dir)?;
+) -> Result<SetupState> {
+    let installed = list_installed_areas(install_dir)
+        .with_context(|| format!("Listing installed areas in {}", install_dir.display()))?;
 
     if installed.is_empty() {
         let suggested = suggested_area_for_prefix(sector_file_prefix);
@@ -96,7 +93,7 @@ pub fn load_profile_in_area(
     install_dir: &Path,
     area_name: &str,
     profile_name: &str,
-) -> ApplicationResult<Option<ProfileConfig>> {
+) -> Result<Option<ProfileConfig>> {
     let path = install_dir
         .join(area_name)
         .join("profiles")
@@ -104,7 +101,9 @@ pub fn load_profile_in_area(
     if !path.exists() {
         return Ok(None);
     }
-    Ok(Some(load_profile_config(&path)?))
+    let profile = load_profile_config(&path)
+        .with_context(|| format!("Loading profile config {}", path.display()))?;
+    Ok(Some(profile))
 }
 
 /// Print the appropriate first-run message for the given state. The host
@@ -141,8 +140,9 @@ pub fn print_setup_state(state: &SetupState) {
 /// `es_runway_selector area profile list`.
 pub fn list_areas_with_profiles(
     install_dir: &Path,
-) -> ApplicationResult<Vec<(AreaManifest, Vec<ProfileConfig>)>> {
-    let installed = list_installed_areas(install_dir)?;
+) -> Result<Vec<(AreaManifest, Vec<ProfileConfig>)>> {
+    let installed = list_installed_areas(install_dir)
+        .with_context(|| format!("Listing installed areas in {}", install_dir.display()))?;
     let mut out = Vec::new();
     for (path, manifest) in installed {
         let mut profiles = Vec::new();

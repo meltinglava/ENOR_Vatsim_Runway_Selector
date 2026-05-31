@@ -4,14 +4,15 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use clap::Subcommand;
+use runway_selector_area_config::{TopLevelConfig, load_with_local_override};
 use runway_selector_areas::{
     fetch_combined_registry, install_area, list_installed_areas, remove_area,
 };
-use runway_selector_core::area_config::{TopLevelConfig, load_with_local_override};
 use tracing::info;
 
-use crate::{config::es_runway_selector_project_dir, error::ApplicationResult};
+use crate::config::es_runway_selector_project_dir;
 
 #[derive(Debug, Subcommand)]
 pub enum AreaCommand {
@@ -38,8 +39,8 @@ pub enum ProfileCommand {
     Show { area: String, profile: String },
 }
 
-pub async fn run_area_command(cmd: AreaCommand) -> ApplicationResult<()> {
-    let top_level = load_top_level_config()?;
+pub async fn run_area_command(cmd: AreaCommand) -> Result<()> {
+    let top_level = load_top_level_config().context("Loading top-level config.toml")?;
     let install_dir = resolved_install_dir(&top_level);
 
     match cmd {
@@ -52,15 +53,16 @@ pub async fn run_area_command(cmd: AreaCommand) -> ApplicationResult<()> {
     Ok(())
 }
 
-fn run_profile_command(cmd: ProfileCommand, install_dir: &Path) -> ApplicationResult<()> {
+fn run_profile_command(cmd: ProfileCommand, install_dir: &Path) -> Result<()> {
     match cmd {
         ProfileCommand::List => print_profiles(install_dir),
         ProfileCommand::Show { area, profile } => print_profile(install_dir, &area, &profile),
     }
 }
 
-fn print_profiles(install_dir: &Path) -> ApplicationResult<()> {
-    let areas = crate::wizard::list_areas_with_profiles(install_dir)?;
+fn print_profiles(install_dir: &Path) -> Result<()> {
+    let areas = crate::wizard::list_areas_with_profiles(install_dir)
+        .with_context(|| format!("Listing profiles under {}", install_dir.display()))?;
     if areas.is_empty() {
         println!("No areas installed.");
         return Ok(());
@@ -78,8 +80,10 @@ fn print_profiles(install_dir: &Path) -> ApplicationResult<()> {
     Ok(())
 }
 
-fn print_profile(install_dir: &Path, area: &str, profile: &str) -> ApplicationResult<()> {
-    match crate::wizard::load_profile_in_area(install_dir, area, profile)? {
+fn print_profile(install_dir: &Path, area: &str, profile: &str) -> Result<()> {
+    match crate::wizard::load_profile_in_area(install_dir, area, profile)
+        .with_context(|| format!("Loading profile {area}/{profile}"))?
+    {
         Some(p) => {
             println!("name        : {}", p.name);
             println!("display_name: {}", p.display_name);
@@ -91,11 +95,12 @@ fn print_profile(install_dir: &Path, area: &str, profile: &str) -> ApplicationRe
     Ok(())
 }
 
-pub fn load_top_level_config() -> ApplicationResult<TopLevelConfig> {
+pub fn load_top_level_config() -> Result<TopLevelConfig> {
     let path = es_runway_selector_project_dir()
         .config_dir()
         .join("config.toml");
-    Ok(load_with_local_override::<TopLevelConfig>(&path)?)
+    load_with_local_override::<TopLevelConfig>(&path)
+        .with_context(|| format!("Reading top-level config at {}", path.display()))
 }
 
 pub fn resolved_install_dir(cfg: &TopLevelConfig) -> PathBuf {
@@ -104,8 +109,9 @@ pub fn resolved_install_dir(cfg: &TopLevelConfig) -> PathBuf {
         .unwrap_or_else(|| es_runway_selector_project_dir().data_dir().join("areas"))
 }
 
-fn print_installed(install_dir: &Path) -> ApplicationResult<()> {
-    let installed = list_installed_areas(install_dir).map_err(map_area_err)?;
+fn print_installed(install_dir: &Path) -> Result<()> {
+    let installed = list_installed_areas(install_dir)
+        .with_context(|| format!("Listing installed areas in {}", install_dir.display()))?;
     if installed.is_empty() {
         println!("No areas installed in {}", install_dir.display());
         return Ok(());
@@ -123,8 +129,10 @@ fn print_installed(install_dir: &Path) -> ApplicationResult<()> {
     Ok(())
 }
 
-async fn print_available(cfg: &TopLevelConfig) -> ApplicationResult<()> {
-    let registry = fetch_combined_registry(cfg).await.map_err(map_area_err)?;
+async fn print_available(cfg: &TopLevelConfig) -> Result<()> {
+    let registry = fetch_combined_registry(cfg)
+        .await
+        .context("Fetching combined area registry")?;
     if registry.areas.is_empty() {
         println!("No areas in registry");
         return Ok(());
@@ -142,20 +150,21 @@ async fn print_available(cfg: &TopLevelConfig) -> ApplicationResult<()> {
     Ok(())
 }
 
-async fn do_install(cfg: &TopLevelConfig, install_dir: &Path, name: &str) -> ApplicationResult<()> {
-    let registry = fetch_combined_registry(cfg).await.map_err(map_area_err)?;
+async fn do_install(cfg: &TopLevelConfig, install_dir: &Path, name: &str) -> Result<()> {
+    let registry = fetch_combined_registry(cfg)
+        .await
+        .with_context(|| format!("Fetching registry while installing {name}"))?;
     let entry = registry
         .areas
         .into_iter()
         .find(|a| a.name == name)
         .ok_or_else(|| runway_selector_areas::AreaRegistryError::UnknownArea {
             name: name.to_string(),
-        })
-        .map_err(map_area_err)?;
+        })?;
 
     let installed = install_area(&entry, install_dir)
         .await
-        .map_err(map_area_err)?;
+        .with_context(|| format!("Installing area {name} into {}", install_dir.display()))?;
     info!(name = %entry.name, version = %entry.version, path = %installed.display(), "Area installed");
     println!(
         "Installed {} v{} to {}",
@@ -166,12 +175,9 @@ async fn do_install(cfg: &TopLevelConfig, install_dir: &Path, name: &str) -> App
     Ok(())
 }
 
-fn do_remove(install_dir: &Path, name: &str) -> ApplicationResult<()> {
-    remove_area(install_dir, name).map_err(map_area_err)?;
+fn do_remove(install_dir: &Path, name: &str) -> Result<()> {
+    remove_area(install_dir, name)
+        .with_context(|| format!("Removing area {name} from {}", install_dir.display()))?;
     println!("Removed area {name} (if it was installed)");
     Ok(())
-}
-
-fn map_area_err(e: runway_selector_areas::AreaRegistryError) -> crate::error::ApplicationError {
-    crate::error::ApplicationError::Areas(e)
 }

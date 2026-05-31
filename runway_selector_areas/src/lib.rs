@@ -29,18 +29,18 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, Cursor},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use flate2::read::GzDecoder;
-use runway_selector_core::{
-    AreaManifest,
-    area_config::{TopLevelConfig, load_area_manifest},
+use runway_selector_area_config::{
+    AreaConfigError, AreaManifest, TopLevelConfig, load_area_manifest,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tar::Archive;
+use tar::{Archive, EntryType};
+use tempfile::TempDir;
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -66,8 +66,10 @@ pub enum AreaRegistryError {
     ManifestRead {
         path: PathBuf,
         #[source]
-        source: runway_selector_core::CoreError,
+        source: AreaConfigError,
     },
+    #[error("Refusing to extract unsafe tarball entry {entry:?}: {reason}")]
+    UnsafeTarEntry { entry: String, reason: &'static str },
 }
 
 pub type AreaResult<T> = Result<T, AreaRegistryError>;
@@ -147,6 +149,11 @@ pub async fn fetch_combined_registry(config: &TopLevelConfig) -> AreaResult<Regi
 /// Download `entry`'s tarball, verify the SHA-256, and untar it into
 /// `<install_dir>/<entry.name>/`, replacing any existing directory there.
 /// Returns the install path.
+///
+/// The extraction is atomic: the tarball is staged in a sibling temp dir under
+/// `install_dir` and `rename`d over the target once every entry has been
+/// verified and written successfully. A failure midway through extraction (or
+/// a malicious entry) leaves the previously installed area untouched.
 pub async fn install_area(entry: &RegistryEntry, install_dir: &Path) -> AreaResult<PathBuf> {
     let bytes = reqwest::Client::builder()
         .build()?
@@ -159,13 +166,18 @@ pub async fn install_area(entry: &RegistryEntry, install_dir: &Path) -> AreaResu
 
     verify_checksum(&entry.name, &entry.checksum_sha256, &bytes)?;
 
+    fs::create_dir_all(install_dir)?;
+
+    let staging = TempDir::new_in(install_dir)?;
+    extract_tar_gz_safe(&bytes, staging.path())?;
+
     let target_dir = install_dir.join(&entry.name);
     if target_dir.exists() {
         fs::remove_dir_all(&target_dir)?;
     }
-    fs::create_dir_all(&target_dir)?;
+    let staged_path = staging.keep();
+    fs::rename(&staged_path, &target_dir)?;
 
-    extract_tar_gz(&bytes, &target_dir)?;
     info!(name = %entry.name, version = %entry.version, dest = %target_dir.display(), "Installed area");
     Ok(target_dir)
 }
@@ -223,11 +235,70 @@ fn verify_checksum(name: &str, expected_hex: &str, bytes: &[u8]) -> AreaResult<(
     Ok(())
 }
 
-fn extract_tar_gz(bytes: &[u8], dest: &Path) -> AreaResult<()> {
+/// Extract a `.tar.gz` into `dest` after validating every entry.
+///
+/// Rejects absolute paths, parent (`..`) components, and non-regular-file /
+/// non-directory entries (notably symlinks and hardlinks), all of which can
+/// be used to escape `dest`. `dest` itself is *not* canonicalized — callers
+/// pass a freshly created directory and the per-entry checks make any
+/// resulting path stay underneath it.
+fn extract_tar_gz_safe(bytes: &[u8], dest: &Path) -> AreaResult<()> {
     let gz = GzDecoder::new(Cursor::new(bytes));
     let mut archive = Archive::new(gz);
-    archive.unpack(dest)?;
+    archive.set_overwrite(false);
+    archive.set_preserve_permissions(false);
+    archive.set_unpack_xattrs(false);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.into_owned();
+        validate_entry_path(&entry_path)?;
+        validate_entry_type(&entry_path, entry.header().entry_type())?;
+        entry.unpack_in(dest)?;
+    }
     Ok(())
+}
+
+fn validate_entry_path(entry_path: &Path) -> AreaResult<()> {
+    let entry_str = entry_path.display().to_string();
+    for component in entry_path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(AreaRegistryError::UnsafeTarEntry {
+                    entry: entry_str,
+                    reason: "contains a parent-directory component",
+                });
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(AreaRegistryError::UnsafeTarEntry {
+                    entry: entry_str,
+                    reason: "is an absolute path",
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_entry_type(entry_path: &Path, entry_type: EntryType) -> AreaResult<()> {
+    let entry_str = || entry_path.display().to_string();
+    match entry_type {
+        EntryType::Regular | EntryType::Directory | EntryType::GNUSparse => Ok(()),
+        EntryType::Symlink | EntryType::Link => Err(AreaRegistryError::UnsafeTarEntry {
+            entry: entry_str(),
+            reason: "is a symlink or hardlink",
+        }),
+        other => Err(AreaRegistryError::UnsafeTarEntry {
+            entry: entry_str(),
+            reason: match other {
+                EntryType::Char => "is a character device entry",
+                EntryType::Block => "is a block device entry",
+                EntryType::Fifo => "is a FIFO entry",
+                _ => "has an unsupported entry type",
+            },
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -285,8 +356,73 @@ mod tests {
     fn extract_tar_gz_writes_files_to_destination() {
         let bytes = make_tar_gz(&[("manifest.toml", "name = \"x\"\n")]);
         let dir = tempdir().unwrap();
-        extract_tar_gz(&bytes, dir.path()).unwrap();
+        extract_tar_gz_safe(&bytes, dir.path()).unwrap();
         assert!(dir.path().join("manifest.toml").exists());
+    }
+
+    fn make_tar_gz_with_symlink(link_name: &str, target: &str) -> Vec<u8> {
+        let mut tar_bytes = Vec::new();
+        {
+            let gz = GzEncoder::new(&mut tar_bytes, Compression::default());
+            let mut builder = tar::Builder::new(gz);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            builder.append_link(&mut header, link_name, target).unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+        tar_bytes
+    }
+
+    #[test]
+    fn extract_tar_gz_rejects_symlinks() {
+        // The high-level `tar::Builder` rejects `..` / absolute paths at
+        // append time, so the parent-dir / absolute-path branches are
+        // covered by the `validate_entry_path` unit tests below. Symlinks
+        // can still be constructed via `append_link`, so we keep the
+        // integration test for that branch.
+        let bytes = make_tar_gz_with_symlink("link", "/etc/passwd");
+        let dir = tempdir().unwrap();
+        let err = extract_tar_gz_safe(&bytes, dir.path()).unwrap_err();
+        assert!(matches!(err, AreaRegistryError::UnsafeTarEntry { .. }));
+    }
+
+    #[test]
+    fn validate_entry_path_rejects_parent_dir() {
+        let err = validate_entry_path(Path::new("../escape.txt")).unwrap_err();
+        assert!(matches!(err, AreaRegistryError::UnsafeTarEntry { .. }));
+    }
+
+    #[test]
+    fn validate_entry_path_rejects_parent_dir_in_middle() {
+        let err = validate_entry_path(Path::new("plugin/../../../etc/passwd")).unwrap_err();
+        assert!(matches!(err, AreaRegistryError::UnsafeTarEntry { .. }));
+    }
+
+    #[test]
+    fn validate_entry_path_rejects_absolute_paths() {
+        let err = validate_entry_path(Path::new("/etc/passwd")).unwrap_err();
+        assert!(matches!(err, AreaRegistryError::UnsafeTarEntry { .. }));
+    }
+
+    #[test]
+    fn validate_entry_path_accepts_relative_paths() {
+        validate_entry_path(Path::new("manifest.toml")).unwrap();
+        validate_entry_path(Path::new("plugin/area_enor")).unwrap();
+        validate_entry_path(Path::new("./profiles/twr.toml")).unwrap();
+    }
+
+    #[test]
+    fn validate_entry_type_rejects_devices_and_fifos() {
+        for ty in [
+            tar::EntryType::Char,
+            tar::EntryType::Block,
+            tar::EntryType::Fifo,
+        ] {
+            let err = validate_entry_type(Path::new("x"), ty).unwrap_err();
+            assert!(matches!(err, AreaRegistryError::UnsafeTarEntry { .. }));
+        }
     }
 
     #[test]

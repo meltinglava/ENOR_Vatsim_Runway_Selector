@@ -2,7 +2,6 @@ use askama::Template;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use tracing::warn;
-use tracing_unwrap::ResultExt;
 
 use std::{
     io::{self, Read, Write},
@@ -86,13 +85,22 @@ impl Airports {
         Ok(())
     }
 
-    pub async fn add_metars(&mut self, metar_urls: &[&str], ignore: &IndexSet<String>) {
-        let metars = get_metars(metar_urls, ignore).await.unwrap_or_log();
+    /// Fetch METARs and attach them to known airports. Returns the underlying
+    /// error rather than panicking on network failure — the caller decides
+    /// whether to abort or continue with whatever selections it already has
+    /// (ATIS + defaults).
+    pub async fn add_metars(
+        &mut self,
+        metar_urls: &[&str],
+        ignore: &IndexSet<String>,
+    ) -> CoreResult<()> {
+        let metars = get_metars(metar_urls, ignore).await?;
         for metar in metars {
             if let Some(airport) = self.airports.get_mut(&metar.icao) {
                 airport.metar = Some(metar);
             }
         }
+        Ok(())
     }
 
     pub async fn read_atis_and_apply_runways(&mut self) -> CoreResult<()> {

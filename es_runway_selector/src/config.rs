@@ -24,8 +24,6 @@ use tracing::{debug, warn};
 use tracing_unwrap::ResultExt;
 use walkdir::WalkDir;
 
-const DEFAULT_SECTOR_FILE_PREFIX: &str = "ENOR";
-
 pub(crate) fn es_runway_selector_project_dir() -> ProjectDirs {
     ProjectDirs::from("", "meltinglava", "es_runway_selector")
         .expect("Failed to get project directories")
@@ -44,8 +42,6 @@ pub(crate) struct ESConfig {
 #[derive(Debug, Serialize, Deserialize)]
 #[skip_serializing_none]
 struct Configurable {
-    ignore_airports: IndexSet<String>,
-    default_runways: IndexMap<String, u8>,
     euroscope_config_folder: Option<PathBuf>,
     euroscope_executable_path: Option<IndexMap<String, PathBuf>>,
     es_main_window_delay_ms: Option<u64>,
@@ -59,18 +55,34 @@ struct AppLauncher {
 }
 
 impl Configurable {
-    fn find_from_config(&self) -> Option<(PathBuf, String)> {
+    fn find_from_config(&self, prefixes: &[String]) -> Option<(PathBuf, String)> {
         let path = self.euroscope_config_folder.as_ref()?;
-        search_for_sct_with_possibilities(&[path])
+        search_for_sct_with_possibilities(&[path], prefixes)
     }
 }
 
 impl ESConfig {
-    pub fn find_euroscope_config_folder(clean_config: bool) -> Option<Self> {
+    /// Locate the EuroScope config folder + sector file.
+    ///
+    /// `sector_file_prefixes` constrains which `.sct` filenames qualify: any
+    /// file whose stem starts with one of the prefixes is a candidate, and
+    /// the newest match wins. Pass an empty slice when no areas are installed
+    /// — the search then accepts any `.sct` so the wizard has something to
+    /// suggest an area for.
+    pub fn find_euroscope_config_folder(
+        clean_config: bool,
+        sector_file_prefixes: &[String],
+    ) -> Option<Self> {
         let (mut config, config_file_path) = setup_configuration(clean_config).unwrap_or_log();
-        let (sct_path, sector_file_prefix) = search_for_newest_sct_file()
-            .or_else(|| config.find_from_config())
-            .or_else(|| query_user_euroscope_config_folder(&mut config, &config_file_path))?;
+        let (sct_path, sector_file_prefix) = search_for_newest_sct_file(sector_file_prefixes)
+            .or_else(|| config.find_from_config(sector_file_prefixes))
+            .or_else(|| {
+                query_user_euroscope_config_folder(
+                    &mut config,
+                    &config_file_path,
+                    sector_file_prefixes,
+                )
+            })?;
 
         let app_launchers = get_app_launchers(&config_file_path);
 
@@ -81,14 +93,6 @@ impl ESConfig {
             config_file_path,
             app_launchers,
         })
-    }
-
-    pub fn get_ignore_airports(&self) -> &IndexSet<String> {
-        &self.config.ignore_airports
-    }
-
-    pub fn get_default_runways(&self) -> &IndexMap<String, u8> {
-        &self.config.default_runways
     }
 
     pub fn get_sct_file_path(&self) -> PathBuf {
@@ -361,6 +365,7 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     config: &mut Configurable,
     config_file_path: &P,
+    prefixes: &[String],
 ) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new()?;
 
@@ -374,13 +379,14 @@ fn query_user_euroscope_config_folder<P: AsRef<Path>>(
             fs::write(config_file_path, toml::to_string_pretty(&config).unwrap())
                 .expect("Failed to write config file");
         })?;
-    search_for_sct_with_possibilities(&[possibility])
+    search_for_sct_with_possibilities(&[possibility], prefixes)
 }
 
 #[cfg(target_env = "musl")]
 fn query_user_euroscope_config_folder<P: AsRef<Path>>(
     _config: &mut Configurable,
     _config_file_path: &P,
+    _prefixes: &[String],
 ) -> Option<(PathBuf, String)> {
     warn!("Running in a musl environment, cannot query user for Euroscope config folder.");
     None
@@ -418,7 +424,7 @@ fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), Co
     }
 }
 
-fn search_for_newest_sct_file() -> Option<(PathBuf, String)> {
+fn search_for_newest_sct_file(prefixes: &[String]) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new();
     let ud = UserDirs::new();
     let mut possibilities = [
@@ -438,11 +444,12 @@ fn search_for_newest_sct_file() -> Option<(PathBuf, String)> {
 
     possibilities.retain(|p| p.exists() && p.is_dir());
 
-    search_for_sct_with_possibilities(&possibilities)
+    search_for_sct_with_possibilities(&possibilities, prefixes)
 }
 
 fn search_for_sct_with_possibilities<P: AsRef<Path>>(
     possibilities: &[P],
+    prefixes: &[String],
 ) -> Option<(PathBuf, String)> {
     let sct_files = possibilities
         .iter()
@@ -452,11 +459,21 @@ fn search_for_sct_with_possibilities<P: AsRef<Path>>(
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| {
-                    let name = e.file_name().to_string_lossy();
                     let Some(extension) = e.path().extension() else {
                         return false;
                     };
-                    name.starts_with(DEFAULT_SECTOR_FILE_PREFIX) && extension == "sct"
+                    if extension != "sct" {
+                        return false;
+                    }
+                    // Empty `prefixes` means "no areas installed yet" — accept
+                    // any sector file so the wizard can suggest an area
+                    // matching whatever the user has open. With areas
+                    // installed, only their declared prefixes qualify.
+                    if prefixes.is_empty() {
+                        return true;
+                    }
+                    let name = e.file_name().to_string_lossy();
+                    prefixes.iter().any(|prefix| name.starts_with(prefix))
                 })
                 .map(|e| e.path().to_path_buf())
         })

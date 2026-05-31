@@ -1,30 +1,39 @@
 //! Writer for EuroScope's `.rwy` runway-assignment file.
 
 use std::{
-    fs::OpenOptions,
-    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    fs::File,
+    io::{self, BufRead, BufReader, BufWriter, Read, Write},
     path::Path,
 };
 
 use itertools::Itertools;
+use tempfile::NamedTempFile;
 
 use crate::{airport::RunwayInUseSource, airports::Airports, error::CoreResult};
 
 /// Read the existing `.rwy` file at `rwy_path`, preserve its `ACTIVE_AIRPORT:`
 /// header block, and rewrite the file with that header followed by
 /// `ACTIVE_RUNWAY:` lines reflecting the current `airports` selections.
+///
+/// Writes atomically: the new content is staged in a temp file in the same
+/// directory and `rename`d over the target on success, so a failure midway
+/// through writing leaves the original `.rwy` untouched.
 pub fn write_runways_to_rwy_file(rwy_path: &Path, airports: &Airports) -> CoreResult<()> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(false)
-        .truncate(false)
-        .open(rwy_path)?;
+    let start_of_file = {
+        let mut existing = File::open(rwy_path)?;
+        read_active_airport(&mut existing)?
+    };
 
-    let start_of_file = read_active_airport(&mut file)?;
-    file.seek(SeekFrom::Start(0))?;
-    file.set_len(0)?;
-    write_runway_file(&mut file, airports, &start_of_file)
+    let parent = rwy_path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = NamedTempFile::new_in(parent)?;
+    {
+        let mut writer = BufWriter::new(tmp.as_file());
+        write_runway_file(&mut writer, airports, &start_of_file)?;
+        writer.flush()?;
+    }
+    tmp.as_file().sync_all()?;
+    tmp.persist(rwy_path).map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// Collect the leading `ACTIVE_AIRPORT:` lines from a `.rwy` file. These are

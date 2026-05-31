@@ -7,7 +7,7 @@
 
 use std::{env, net::SocketAddr, path::PathBuf};
 
-use runway_selector_core::area_config::{AreaConfig, load_area_config};
+use runway_selector_area_config::{AreaConfig, load_area_config};
 use tonic::transport::Server;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;

@@ -11,6 +11,7 @@ description = "Subprocess lifecycle and gRPC client wiring for area plugins"
 runway_selector_core = { path = "../runway_selector_core" }
 runway_selector_protocol = { path = "../runway_selector_protocol" }
 
+semver = "1.0.27"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time", "net", "io-util"] }
 tonic = { workspace = true }
@@ -18,7 +19,9 @@ tonic-health = { workspace = true }
 tracing = { workspace = true }
 which = "8"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.180"
+
 [dev-dependencies]
-semver = "1.0.27"
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["test-util"] }

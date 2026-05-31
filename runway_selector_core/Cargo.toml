@@ -20,14 +20,13 @@ open = "5.3.5"
 prost-types = { workspace = true }
 regex = "1.12.3"
 reqwest = { workspace = true }
+runway_selector_area_config = { path = "../runway_selector_area_config" }
 runway_selector_protocol = { path = "../runway_selector_protocol" }
-semver = { version = "1.0.27", features = ["serde"] }
 serde = { workspace = true }
 serde_with = { workspace = true }
 tempfile = "3.27.0"
 thiserror = { workspace = true }
 tokio = { workspace = true }
-toml = { workspace = true }
 tracing = { workspace = true }
 tracing-unwrap = { workspace = true }
 vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }

@@ -7,6 +7,8 @@ use tracing_unwrap::ResultExt;
 
 use crate::error::CoreResult;
 
+const METAR_FETCH_RETRIES: u32 = 3;
+
 /// Fetch METARs from the supplied VATSIM URLs and parse them.
 ///
 /// `urls` are area-specific (e.g. `https://metar.vatsim.net/EN` for the
@@ -27,43 +29,45 @@ pub async fn get_metars(urls: &[&str], ignore: &IndexSet<String>) -> CoreResult<
 
 #[tracing::instrument]
 async fn get_metars_from_url(url: &str) -> CoreResult<String> {
-    let retries = 3;
-    let mut first_error = None;
-    for i in 0..retries {
-        let resp = reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .unwrap_or_log()
-            .get(url)
-            .send()
-            .await;
+    let client = reqwest::ClientBuilder::new()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_log();
 
-        match resp {
-            Ok(resp) => {
-                let text = resp.text().await;
-                match text {
-                    Ok(text) => return Ok(text),
-                    Err(e) => {
-                        if i == retries {
-                            tracing::error!("Failed to get text from {}: {}", url, e);
-                        } else {
-                            tracing::warn!("Failed to get text from {}: {}", url, e);
-                        }
-                        first_error.get_or_insert(e);
-                    }
-                }
-            }
+    let mut first_error: Option<reqwest::Error> = None;
+    for attempt in 1..=METAR_FETCH_RETRIES {
+        let result = async {
+            let resp = client.get(url).send().await?;
+            resp.text().await
+        }
+        .await;
+
+        match result {
+            Ok(text) => return Ok(text),
             Err(e) => {
-                if i == retries {
-                    tracing::error!("Failed to get {}: {}", url, e);
+                if attempt == METAR_FETCH_RETRIES {
+                    tracing::error!(
+                        "Failed to fetch {} after {} attempts: {}",
+                        url,
+                        METAR_FETCH_RETRIES,
+                        e
+                    );
                 } else {
-                    tracing::warn!("Failed to get {}: {}", url, e);
+                    tracing::warn!(
+                        "Failed to fetch {} (attempt {}/{}): {}",
+                        url,
+                        attempt,
+                        METAR_FETCH_RETRIES,
+                        e
+                    );
                 }
                 first_error.get_or_insert(e);
             }
         }
     }
-    Err(first_error.unwrap().into())
+    Err(first_error
+        .expect("loop runs at least once, so an error must have been recorded on failure")
+        .into())
 }
 
 #[cfg(test)]

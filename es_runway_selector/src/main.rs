@@ -1,6 +1,6 @@
 pub(crate) mod area_cli;
+pub(crate) mod area_runtime;
 pub(crate) mod config;
-pub(crate) mod error;
 pub(crate) mod plugin_runner;
 pub(crate) mod wizard;
 
@@ -11,9 +11,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use config::ESConfig;
-use error::ApplicationResult;
+use indexmap::{IndexMap, IndexSet};
 use jiff::{Zoned, tz::TimeZone};
 use runway_selector_core::{Airports, output::write_runways_to_rwy_file};
 use self_update::{
@@ -23,14 +24,6 @@ use self_update::{
 use tracing::{info, trace, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
-use tracing_unwrap::{OptionExt, ResultExt};
-
-/// VATSIM METAR sources for the ENOR area. Moves to per-area `area.toml` in a
-/// later phase, once area packages exist.
-const METAR_URLS: &[&str] = &[
-    "https://metar.vatsim.net/EN",
-    "https://metar.vatsim.net/ESKS",
-];
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -72,7 +65,7 @@ fn get_target() -> &'static str {
     }
 }
 
-fn update() -> ApplicationResult<bool> {
+fn update() -> Result<bool> {
     let update_status = self_update::backends::github::Update::configure()
         .repo_owner("meltinglava")
         .repo_name("ENOR_Vatsim_Runway_Selector")
@@ -81,8 +74,10 @@ fn update() -> ApplicationResult<bool> {
         .target(get_target())
         .show_download_progress(false)
         .current_version(cargo_crate_version!())
-        .build()?
-        .update()?;
+        .build()
+        .context("Building self-update configuration")?
+        .update()
+        .context("Performing self-update")?;
     Ok(match update_status {
         UpToDate(v) => {
             trace!("Version: {} is up to date", v);
@@ -95,19 +90,66 @@ fn update() -> ApplicationResult<bool> {
     })
 }
 
-async fn run(cli: Cli) -> ApplicationResult<()> {
-    let config = Arc::new(ESConfig::find_euroscope_config_folder(cli.clean_config).unwrap_or_log());
+async fn run(cli: Cli) -> Result<()> {
+    let top_level = area_cli::load_top_level_config().ok();
+    let install_dir = top_level.as_ref().map(area_cli::resolved_install_dir);
+
+    // Load installed areas first — they own the sector file prefix, METAR
+    // URLs, ignore list, and default runways. The host no longer hardcodes
+    // any of that.
+    let installed_areas = match install_dir.as_deref() {
+        Some(dir) => area_runtime::load_installed_areas(dir)
+            .with_context(|| format!("Loading installed areas from {}", dir.display()))?,
+        None => Vec::new(),
+    };
+    let installed_prefixes = area_runtime::installed_sector_file_prefixes(&installed_areas);
+
+    let config = Arc::new(
+        ESConfig::find_euroscope_config_folder(cli.clean_config, &installed_prefixes).ok_or_else(
+            || {
+                anyhow!(
+                    "Could not locate a EuroScope sector file (looked for prefixes: {:?}). \
+                     Install an area with `es_runway_selector area install <name>` or set \
+                     `euroscope_config_folder` in your config.toml.",
+                    installed_prefixes
+                )
+            },
+        )?,
+    );
 
     // First-run wizard: tell the user what to install if they haven't yet.
     // Always informational — never blocks the main flow.
-    let top_level = area_cli::load_top_level_config().ok();
-    if let Some(top_level) = top_level.as_ref() {
-        let install_dir = area_cli::resolved_install_dir(top_level);
-        match wizard::detect_setup_state(&install_dir, Some(config.get_sector_file_prefix())) {
+    if let Some(dir) = install_dir.as_deref() {
+        match wizard::detect_setup_state(dir, Some(config.get_sector_file_prefix())) {
             Ok(state) => wizard::print_setup_state(&state),
             Err(e) => warn!(error = ?e, "Setup-state detection failed"),
         }
     }
+
+    // Pick the area whose sector_file_prefix owns this sector file.
+    let active_area =
+        area_runtime::match_area_for_prefix(&installed_areas, config.get_sector_file_prefix());
+    if active_area.is_none() {
+        warn!(
+            sector_file_prefix = config.get_sector_file_prefix(),
+            "No installed area declares a sector_file_prefix that matches; \
+             selections will use defaults only"
+        );
+    }
+
+    // Anything area-derived comes from the active area's area.toml, never
+    // from host config.toml.
+    static EMPTY_IGNORE: std::sync::OnceLock<IndexSet<String>> = std::sync::OnceLock::new();
+    static EMPTY_DEFAULTS: std::sync::OnceLock<IndexMap<String, u8>> = std::sync::OnceLock::new();
+    let ignore_airports = active_area
+        .map(|a| &a.config.ignore_airports)
+        .unwrap_or_else(|| EMPTY_IGNORE.get_or_init(IndexSet::new));
+    let default_runways = active_area
+        .map(|a| &a.config.default_runways)
+        .unwrap_or_else(|| EMPTY_DEFAULTS.get_or_init(IndexMap::new));
+    let metar_urls: Vec<&str> = active_area
+        .map(|a| a.config.metar_urls.iter().map(String::as_str).collect())
+        .unwrap_or_default();
 
     let config_task1 = config.clone();
     let task1 = tokio::spawn(async move {
@@ -117,34 +159,35 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
         }
     });
     let mut airports = Airports::new();
-    let mut sct_file = File::open(config.get_sct_file_path()).unwrap();
-    airports.load_airports_from_sector_file(&mut sct_file, config.get_ignore_airports())?;
+    let sct_path = config.get_sct_file_path();
+    let mut sct_file = File::open(&sct_path)
+        .with_context(|| format!("Opening sector file {}", sct_path.display()))?;
     airports
-        .add_metars(METAR_URLS, config.get_ignore_airports())
-        .await;
-    airports.read_atis_and_apply_runways().await.unwrap();
+        .load_airports_from_sector_file(&mut sct_file, ignore_airports)
+        .with_context(|| format!("Parsing sector file {}", sct_path.display()))?;
+    if metar_urls.is_empty() {
+        warn!("Active area declares no METAR URLs; skipping METAR fetch");
+    } else if let Err(e) = airports.add_metars(&metar_urls, ignore_airports).await {
+        warn!(error = ?e, "METAR fetch failed; continuing without METAR-derived selections");
+    }
+    if let Err(e) = airports.read_atis_and_apply_runways().await {
+        warn!(error = ?e, "ATIS fetch failed; continuing without ATIS-derived selections");
+    }
 
     // Hand selection off to the area plugin (if one is installed).
     // ATIS-derived runways are already in `airports` and get passed to the
     // plugin so it can decide whether to honour them or override.
-    if let Some(top_level) = top_level.as_ref() {
-        let install_dir = area_cli::resolved_install_dir(top_level);
-        match plugin_runner::find_installed_area(&install_dir, "enor") {
-            Ok(Some((area_dir, manifest))) => {
-                if let Err(e) =
-                    plugin_runner::run_area_selection(&mut airports, &area_dir, &manifest).await
-                {
-                    warn!(error = ?e, "Area plugin failed; falling back to defaults only");
-                }
-            }
-            Ok(None) => warn!("No 'enor' area installed; selections will use defaults only"),
-            Err(e) => warn!(error = ?e, "Failed to locate installed area"),
-        }
+    if let Some(area) = active_area
+        && let Err(e) = plugin_runner::run_area_selection(&mut airports, area).await
+    {
+        warn!(area = %area.manifest.name, error = ?e, "Area plugin failed; falling back to defaults only");
     }
 
-    airports.apply_default_runways(config.get_default_runways());
+    airports.apply_default_runways(default_runways);
     airports.sort();
-    write_runways_to_rwy_file(&config.get_rwy_file_path(), &airports).unwrap_or_log();
+    let rwy_path = config.get_rwy_file_path();
+    write_runways_to_rwy_file(&rwy_path, &airports)
+        .with_context(|| format!("Writing runway file {}", rwy_path.display()))?;
     let task2 = tokio::spawn(async move {
         let handles = config.run_apps(true).await;
         for handle in handles {
@@ -160,10 +203,12 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
             warn!(airport.icao, metar = "No METAR / unparsable metar", ?airport.runways, "No runway selected for:")
         }
     }
-    airports.make_runway_report_html()?;
+    airports
+        .make_runway_report_html()
+        .context("Generating HTML runway report")?;
 
     for task in tasks {
-        task.await?;
+        task.await.context("Joining background app-launcher task")?;
     }
 
     Ok(())
@@ -249,32 +294,34 @@ fn cleanup_old_logs(dir: &Path, max_age_days: u64) -> std::io::Result<()> {
     Ok(())
 }
 
-fn main() -> ApplicationResult<()> {
+fn main() -> Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install ring crypto provider");
+        .map_err(|_| anyhow!("Failed to install ring crypto provider"))?;
     let mut cli = Cli::parse();
-    let (log_file_path, _guard) = setup_logging(&cli).expect("failed to set up logging");
+    let (log_file_path, _guard) = setup_logging(&cli).context("Setting up logging")?;
     info!("ES Runway Selector version {}", cargo_crate_version!());
     if !cfg!(debug_assertions) && cli.previous_log_path.is_none() {
         match update() {
             Ok(true) => {
                 info!("Update check completed, restarting application to new version");
                 let mut args = std::env::args();
-                let application = args.next().unwrap_or_log();
+                let application = args
+                    .next()
+                    .context("argv[0] missing — cannot determine self path to restart")?;
                 let mut args_for_next = vec![
                     "--previous-log-path".to_string(),
                     log_file_path.to_string_lossy().to_string(),
                 ];
                 args_for_next.extend(args);
-                let mut result = std::process::Command::new(application)
+                let mut result = std::process::Command::new(&application)
                     .args(&args_for_next)
                     .spawn()
-                    .expect("Failed to restart application");
+                    .with_context(|| format!("Restarting {application} after self-update"))?;
                 std::process::exit(
                     result
                         .wait()
-                        .expect("Failed to wait for new application")
+                        .context("Waiting for restarted application to exit")?
                         .code()
                         .unwrap_or(-1),
                 );
@@ -282,17 +329,22 @@ fn main() -> ApplicationResult<()> {
             Ok(false) => {
                 info!("Update check completed, application is up to date");
             }
-            Err(e) => warn!("Update check failed: {0}, {0:?}", e),
+            Err(e) => warn!("Update check failed: {0:#}", e),
         }
     }
     println!();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?;
+        .build()
+        .context("Building tokio runtime")?;
     let command = cli.command.take();
     match command {
-        Some(Command::Area { cmd }) => runtime.block_on(area_cli::run_area_command(cmd))?,
-        None => runtime.block_on(run(cli))?,
+        Some(Command::Area { cmd }) => runtime
+            .block_on(area_cli::run_area_command(cmd))
+            .context("Running area subcommand")?,
+        None => runtime
+            .block_on(run(cli))
+            .context("Running runway selector")?,
     }
     Ok(())
 }

@@ -5,6 +5,7 @@ members = [
     "es_runway_selector",
     "metar_decoder",
     "find_bad_metar_job",
+    "runway_selector_area_config",
     "runway_selector_areas",
     "runway_selector_core",
     "runway_selector_plugin_host",
