@@ -8,12 +8,17 @@
 //! - ATIS regex parsing ([`atis`])
 //! - runway wind component math ([`airport`])
 //! - the runway-source priority model ([`airport::RunwayInUseSource`])
+//! - the layered area-config types and `.local.toml` merge
+//!   ([`area_config`])
+//! - the host-side proto converter that lowers parsed METARs and runway
+//!   state into the gRPC plugin contract ([`proto_convert`])
 //! - the `.rwy` output writer ([`output`])
 //! - the HTML runway report (rendered from [`airports::Airports`])
 //!
-//! Area-specific selection logic for airports with custom rules (currently
-//! ENGM and ENZV; planned to move out to a separate plugin crate in a later
-//! refactor phase) lives temporarily on [`airport::Airport`].
+//! Area-specific runway-selection logic (the ENGM time-of-day modes, the
+//! ENZV crosswind switch, generic max-headwind) lives in the area plugin
+//! crates (e.g. `area_enor`) and runs in a subprocess that talks to the
+//! host over gRPC.
 
 pub mod airport;
 pub mod airports;

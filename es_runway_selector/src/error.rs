@@ -23,4 +23,8 @@ pub(crate) enum ApplicationError {
     SelfUpdate(#[from] SelfUpdateError),
     #[error("Async join error: {0}")]
     AsyncJoin(#[from] JoinError),
+    #[error("Plugin host error: {0}")]
+    Plugin(#[from] runway_selector_plugin_host::PluginError),
+    #[error("gRPC error: {0}")]
+    Grpc(#[from] tonic::Status),
 }

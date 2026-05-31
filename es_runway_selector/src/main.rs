@@ -1,6 +1,7 @@
 pub(crate) mod area_cli;
 pub(crate) mod config;
 pub(crate) mod error;
+pub(crate) mod plugin_runner;
 pub(crate) mod wizard;
 
 use std::{
@@ -99,8 +100,9 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
 
     // First-run wizard: tell the user what to install if they haven't yet.
     // Always informational — never blocks the main flow.
-    if let Ok(top_level) = area_cli::load_top_level_config() {
-        let install_dir = area_cli::resolved_install_dir(&top_level);
+    let top_level = area_cli::load_top_level_config().ok();
+    if let Some(top_level) = top_level.as_ref() {
+        let install_dir = area_cli::resolved_install_dir(top_level);
         match wizard::detect_setup_state(&install_dir, Some(config.get_sector_file_prefix())) {
             Ok(state) => wizard::print_setup_state(&state),
             Err(e) => warn!(error = ?e, "Setup-state detection failed"),
@@ -121,7 +123,26 @@ async fn run(cli: Cli) -> ApplicationResult<()> {
         .add_metars(METAR_URLS, config.get_ignore_airports())
         .await;
     airports.read_atis_and_apply_runways().await.unwrap();
-    airports.select_runway_in_use(config.get_default_runways());
+
+    // Hand selection off to the area plugin (if one is installed).
+    // ATIS-derived runways are already in `airports` and get passed to the
+    // plugin so it can decide whether to honour them or override.
+    if let Some(top_level) = top_level.as_ref() {
+        let install_dir = area_cli::resolved_install_dir(top_level);
+        match plugin_runner::find_installed_area(&install_dir, "enor") {
+            Ok(Some((area_dir, manifest))) => {
+                if let Err(e) =
+                    plugin_runner::run_area_selection(&mut airports, &area_dir, &manifest).await
+                {
+                    warn!(error = ?e, "Area plugin failed; falling back to defaults only");
+                }
+            }
+            Ok(None) => warn!("No 'enor' area installed; selections will use defaults only"),
+            Err(e) => warn!(error = ?e, "Failed to locate installed area"),
+        }
+    }
+
+    airports.apply_default_runways(config.get_default_runways());
     airports.sort();
     write_runways_to_rwy_file(&config.get_rwy_file_path(), &airports).unwrap_or_log();
     let task2 = tokio::spawn(async move {

@@ -130,28 +130,11 @@ impl Airports {
         Ok(())
     }
 
-    pub fn select_runway_in_use(&mut self, default_runways: &IndexMap<String, u8>) {
-        self.runway_in_use_based_on_metar(default_runways);
-        self.apply_default_runways(default_runways);
-    }
-
-    fn runway_in_use_based_on_metar(&mut self, default_runways: &IndexMap<String, u8>) {
-        for airport in self.airports.values_mut() {
-            if airport.icao == "ENGM" {
-                let (source, runway_in_use) =
-                    airport.set_runway_for_engm(default_runways).unwrap_or_log();
-                airport.runways_in_use.insert(source, runway_in_use);
-            } else if let Ok(runways_in_use) = airport.set_runway_based_on_metar_wind()
-                && !runways_in_use.is_empty()
-            {
-                airport
-                    .runways_in_use
-                    .insert(RunwayInUseSource::Metar, runways_in_use);
-            }
-        }
-    }
-
-    fn apply_default_runways(&mut self, default_runways: &IndexMap<String, u8>) {
+    /// Fill in the `Default` source for any airport that still has no
+    /// selection after the area plugin (and ATIS parser) have had their turn.
+    /// Called by the host after [`Self::read_atis_and_apply_runways`] and the
+    /// plugin's `SelectRunways` RPC.
+    pub fn apply_default_runways(&mut self, default_runways: &IndexMap<String, u8>) {
         for airport in self.airports.values_mut() {
             let default_entry = airport.runways_in_use.entry(RunwayInUseSource::Default);
             match default_entry {
@@ -660,10 +643,6 @@ pub(crate) mod tests {
 
     use super::*;
 
-    fn test_default_runways() -> IndexMap<String, u8> {
-        IndexMap::from([("ENGM".to_string(), 1u8)])
-    }
-
     fn test_ignored_airports() -> IndexSet<String> {
         [
             "ENAE", "ENAS", "ENAX", "ENBB", "ENBM", "ENDI", "ENDO", "ENEG", "ENEN", "ENFG", "ENFY",
@@ -703,14 +682,6 @@ pub(crate) mod tests {
         }
     }
 
-    fn setup_test_airport_from_metar(metar: &str) -> Airport {
-        let ap = make_test_airport(metar);
-        let mut aps = Airports::new();
-        aps.add_airport(ap);
-        aps.select_runway_in_use(&test_default_runways());
-        aps.airports.pop().unwrap().1
-    }
-
     fn make_issue20_enzv_airports() -> Airports {
         let mut airport = make_test_airport("ENZV 191650Z 30005KT CAVOK 08/04 Q1026 NOSIG");
         airport.runways_in_use = IndexMap::from([(
@@ -724,36 +695,6 @@ pub(crate) mod tests {
         Airports {
             airports: IndexMap::from([(airport.icao.clone(), airport)]),
         }
-    }
-
-    #[test]
-    fn test_engm_variable_to_segregated_name() {
-        let metar = "ENGM 080920Z VRB03KT 9999 -SHSN OVC009 M09/M12 Q1024 NOSIG";
-        let gm = setup_test_airport_from_metar(metar);
-        assert_eq!(
-            gm.runways_in_use,
-            IndexMap::from([(
-                RunwayInUseSource::Default,
-                [
-                    ("01L".to_string(), RunwayUse::Departing),
-                    ("01R".to_string(), RunwayUse::Arriving)
-                ]
-                .into()
-            )])
-        )
-    }
-
-    #[test]
-    fn test_metar_enmh() {
-        let metar = "ENMH 220550Z AUTO 30009KT 250V330 9999 BKN028/// OVC049/// 07/02 Q1016";
-        let airport = setup_test_airport_from_metar(metar);
-        assert_eq!(
-            airport.runways_in_use,
-            IndexMap::from([(
-                RunwayInUseSource::Metar,
-                [("35".to_string(), RunwayUse::Both)].into()
-            )])
-        );
     }
 
     #[test]

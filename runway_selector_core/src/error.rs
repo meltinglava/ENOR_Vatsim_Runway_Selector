@@ -21,8 +21,6 @@ pub enum CoreError {
     AreaConfig(String),
     #[error("Time error: {0}")]
     Time(#[from] jiff::Error),
-    #[error("No runway to set based on wind")]
-    NoRunwayToSet,
     #[error("Async join error: {0}")]
     AsyncJoin(#[from] JoinError),
     #[error("VATSIM API error: {0}")]
