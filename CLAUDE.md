@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Runway Selector — a Rust tool that automatically selects active runways for [EuroScope](https://www.euroscope.hu/) (a flight simulation radar client) on the VATSIM network. It ingests live METAR data and ATIS broadcasts, applies area-specific selection logic, and writes the result to EuroScope's `.rwy` format. **Not for real-world operations.**
 
-Originally hardcoded for the Polaris area (Norway/ENOR). Mid-migration to an *area-agnostic* design where per-FIR selection logic lives in installable plugin packages that talk to the host over gRPC.
+Originally hardcoded for the Polaris area (Norway/ENOR). Per-FIR selection logic now lives in installable area-plugin packages that the host spawns as subprocesses and drives over gRPC; `area_enor` is the first one.
 
 ## Workspace Structure
 
@@ -14,18 +14,18 @@ Eight crates in a Cargo workspace (`resolver = "3"`, edition 2024):
 
 ### Host
 
-- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. Currently still drives runway selection through `runway_selector_core::airport`; the cutover to spawning area plugins is the next planned change (see "Migration state" below).
+- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. `plugin_runner` spawns the installed area's subprocess, calls `GetAirports` + `SelectRunways` over gRPC, and merges the result back onto `Airports::runways_in_use`.
 
 ### Core libraries
 
-- **`runway_selector_core/`** — Area-agnostic selection types and logic. Owns sector file decoding, METAR fetching, ATIS regex parsing, runway wind component math, the runway-source priority model, the `.rwy` writer (`output::write_runways_to_rwy_file`), the HTML runway report, *and* (transitionally) the ENGM/ENZV hardcoded rules that should ultimately live only in `area_enor`.
+- **`runway_selector_core/`** — Area-agnostic selection types and logic. Owns sector file decoding, METAR fetching, ATIS regex parsing, runway wind component math, the runway-source priority model, the layered area-config types and `.local.toml` merge, the host-side proto converter (`proto_convert`) that lowers parsed METARs and runway state into the gRPC plugin contract, the `.rwy` writer, and the HTML runway report. Area-specific runway-selection rules no longer live here.
 - **`runway_selector_protocol/`** — gRPC contract every area plugin implements. `.proto` defines `runway_selector.v1.RunwaySelector` (`GetAirports`, `SelectRunways`) plus a rich `Metar` message tree, generated via `tonic-prost-build` at build time. `protoc` is picked up from `PATH` (preferred — required on musl) with a `protoc-bin-vendored` glibc fallback. Re-exports the standard `grpc.health.v1` health stubs through `tonic-health`.
 - **`runway_selector_plugin_host/`** — Lifecycle for the subprocess plugins. `build_command` constructs the right `tokio::process::Command` (Rust runtimes exec the entry directly; Python/Node/Deno route through `mise exec`). `spawn_plugin` reserves a free localhost port, spawns the child, and polls `grpc.health.v1.Health/Check` until SERVING.
 - **`runway_selector_areas/`** — Area registry, install, and removal. Fetches the registry JSON, downloads area tarballs, verifies SHA-256, and extracts to `<install_dir>/<name>/`. `list_installed_areas` enumerates `manifest.toml`s on disk.
 
 ### Area plugins
 
-- **`area_enor/`** — First concrete area implementation. Rust binary that satisfies the `runway_selector.v1` contract plus `grpc.health.v1`. Currently implements ATIS passthrough + generic max-headwind selection (with a 2 kt margin). ENGM (Oslo) and ENZV (Stavanger) hand-tuned rules from `runway_selector_core::airport` are scheduled to move here. Ships its package layout under `area_enor/package/` (manifest, area.toml, profiles/).
+- **`area_enor/`** — First concrete area implementation. Rust binary that satisfies the `runway_selector.v1` contract plus `grpc.health.v1`. Implements ATIS passthrough, generic max-headwind selection (with a 2 kt margin), and the hand-tuned ENGM (Mixed/Segregated/Single ops driven by Europe/Oslo local time + METAR LVP triggers) and ENZV (15-kt crosswind switch from 18/36 to 10/28) rules. Ships its package layout under `area_enor/package/` (manifest, area.toml, profiles/).
 
 ### Misc
 
@@ -101,28 +101,20 @@ The user-facing rule: **anything ending in `.local.toml` belongs to you and surv
 4. Parse the `.sct` `[RUNWAY]` section (UTF-8, then ISO-8859-1 fallback) into `Airport` + `Runway` records.
 5. Fetch METARs from the configured URLs (`https://metar.vatsim.net/EN` + `/ESKS` currently hardcoded; moves to `area.toml`) and parse via `metar_decoder`.
 6. Fetch VATSIM v3 data and parse `text_atis` per relevant ICAO via `runway_selector_core::atis::find_runway_in_use_from_atis` — a regex stack that recognizes `RUNWAY XX IN USE`, `APPROACH RUNWAY XX`, `DEPARTURE RUNWAY XX`, `RUNWAYS XX AND YY IN USE`, and the split `ARRIVAL/DEPARTURE INFORMATION` bulletin form.
-7. `select_runway_in_use` runs the `Metar` source via wind logic, then `apply_default_runways` fills the `Default` source from the area's `default_runways` for airports still without any selection.
-8. Spawn EuroScope launchers (`prf` paths joined onto the sector-file folder; the first instance launches immediately, subsequent ones wait `es_main_window_delay_ms`, default 2000 ms, so the first window becomes the main one).
-9. Write the `.rwy` file and open a temp HTML runway report (`make_runway_report_html`, askama template `runway_selector_core/templates/runway_report.html`) via `open::that_detached`.
+7. `plugin_runner::run_area_selection` looks up the installed `enor` area, spawns it via `runway_selector_plugin_host::spawn_plugin`, calls `GetAirports` + `SelectRunways` over gRPC, and writes the returned per-airport selections into `Airports::runways_in_use` under the source the plugin attributes (ATIS / METAR / DEFAULT). If no area is installed (or the plugin errors), the host logs and continues with defaults only.
+8. `Airports::apply_default_runways` fills the `Default` source from the area's `default_runways` for airports still without any selection.
+9. Spawn EuroScope launchers (`prf` paths joined onto the sector-file folder; the first instance launches immediately, subsequent ones wait `es_main_window_delay_ms`, default 2000 ms, so the first window becomes the main one).
+10. Write the `.rwy` file and open a temp HTML runway report (`make_runway_report_html`, askama template `runway_selector_core/templates/runway_report.html`) via `open::that_detached`.
 
-### Migration state — what is *not* yet wired
+### Airport-specific runway logic (in `area_enor::selector`)
 
-The host (`es_runway_selector`) still drives runway selection through `runway_selector_core::airport` directly. It does **not** yet:
+Every per-airport selection rule lives in `area_enor::selector` and operates on the gRPC `runway_selector.v1` request types (parsed METAR, pre-computed `WindComponents` per direction). Dispatch is by ICAO.
 
-- Spawn `area_enor` (or any plugin) via `runway_selector_plugin_host`.
-- Convert `metar_decoder::Metar` into `runway_selector_protocol::v1::Metar`.
-- Call `RunwaySelector::SelectRunways` over gRPC.
+- **Generic** — pick the runway whose `WindComponents.headwind_kt` is strictly the highest, with a ≥ 2 kt margin over the runner-up. Tied / ambiguous winds emit nothing and let the host fall back to area defaults.
+- **ENGM (Oslo Gardermoen)** — `select_for_engm` picks a direction prefix ("01" or "19") by grouping runways and picking the prefix with the highest max headwind (same 2 kt margin), then chooses **Mixed / Segregated / Single** ops based on the request's `now_utc` + `area_timezone` (segregated after 22:30 local, single before 06:30 local) and METAR-derived LVP triggers — cloud ceiling < 1500 ft, any RVR group, visibility < 5000 m, vertical visibility, freezing weather, possible-de-ice precipitation with temperature < 5 °C (or unknown). Mixed emits `XXL`/`XXR` as `Both`; Segregated splits dep/arr (`L`=Departing, `R`=Arriving); Single picks `01L` or `19R`.
+- **ENZV (Stavanger)** — `select_for_enzv` defaults to `18/36` (whichever has the higher headwind). If that runway's pre-computed `crosswind_kt` is ≥ 15 and the perpendicular runway has a strictly lower crosswind, it switches to the secondary (10/28) runway.
 
-The pieces are in place — protocol crate, plugin host, area_enor server, area config types, install/registry CLI, wizard. The remaining work is the converter and the call-site swap in `main.rs::run`. Until then, ENGM and ENZV hand-tuned rules continue to live on `runway_selector_core::airport::Airport` and run in-process. Once the wiring lands, those methods move to `area_enor::selector` and get deleted from core.
-
-### Airport-specific runway logic (`runway_selector_core::airport`)
-
-Most airports route through `internal_set_runway_based_on_metar_wind`: pick the direction with the highest headwind, but only if it beats the next one by > 2 kt. Two airports have hand-rolled rules; **adding logic for any other multi-runway airport is required** — the general path `unreachable!()`s otherwise.
-
-- **ENGM (Oslo Gardermoen)** — `set_runway_for_engm` picks a direction from wind (falling back to the configured default, then `"01"`), then chooses **Mixed / Segregated / Single** ops based on Europe/Oslo local time (segregated after 22:30, single before 06:30) and METAR-derived LVP, RVR, sub-5000 m visibility, vertical visibility, freezing weather, and possible-de-ice conditions. Mixed emits `XXL`/`XXR` as `Both`; Segregated splits dep/arr (`L`=Departing, `R`=Arriving); Single picks `01L` or `19R`.
-- **ENZV (Stavanger)** — `set_runway_for_enzv` defaults to the `18/36` runway, but if its crosswind ≥ 15 kt and the perpendicular runway has a strictly lower crosswind, it switches to the secondary runway.
-
-Both will move to `area_enor` once the host calls plugins.
+Core (`runway_selector_core::airport`) still owns the wind-component math (`runway_max_headwind` / `runway_max_crosswind` / `runway_wind_components`) the HTML report needs to format per-runway wind columns; the host runs that math locally to populate the proto `WindComponents` it ships to the plugin.
 
 ### `metar_decoder`
 
