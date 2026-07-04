@@ -1,3 +1,0 @@
-grpcio==1.66.*
-grpcio-health-checking==1.66.*
-protobuf>=5.27,<6

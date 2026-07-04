@@ -8,7 +8,7 @@
 //!     manifest.toml         # area identity — never edited by users
 //!     area.toml             # area defaults — replaced by area updates
 //!     area.local.toml       # user sparse overrides (never touched by updates)
-//!     plugin/               # gRPC server entry point
+//!     plugin/               # HTTP/JSON server entry point
 //!     profiles/
 //!         <profile>.toml          # ships with the area
 //!         <profile>.local.toml    # user sparse overrides
@@ -60,8 +60,11 @@ pub struct AreaManifest {
     pub description: Option<String>,
     pub runtime: Runtime,
     /// Entry path relative to the area's `plugin/` directory. Spawned as a
-    /// subprocess that speaks the gRPC protocol.
+    /// subprocess that serves the HTTP/JSON plugin contract.
     pub entry: String,
+    /// The airports this area owns — the single authoritative list. The host
+    /// only sends the plugin airports from this list, and the first installed
+    /// area to claim an ICAO wins when two areas overlap.
     #[serde(default)]
     pub supported_icaos: Vec<String>,
     /// Minimum host (`runway_selector_core`) semver required. Hosts older

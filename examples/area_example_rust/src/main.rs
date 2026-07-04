@@ -1,91 +1,83 @@
 //! Minimal Rust area plugin.
 //!
 //! Handles two made-up airports (`ZZZA`, `ZZZB`):
-//!   * If the host parsed a runway out of ATIS, pass it through as `ATIS`.
-//!   * Otherwise pick the runway with the strongest headwind, attribute it
-//!     to `METAR`, and assign it to both arrivals and departures.
-//!   * If there's no usable wind, omit the airport so the host falls back to
-//!     `area.toml`'s `default_runways`.
+//!   * Pick the runway with the strongest headwind (the host has already
+//!     computed the wind components — no trigonometry here) and assign it
+//!     to both arrivals and departures.
+//!   * If there's no usable wind, answer `handled: false` so the host falls
+//!     back to `area.toml`'s `default_runways`.
+//!
+//! Airports the host already decided from ATIS never reach the plugin.
+//!
+//! Serves the HTTP/JSON contract from `runway_plugin_api`:
+//! `GET /health`, `POST /runway-selections`, `POST /shutdown`.
 
-use std::{env, net::SocketAddr};
+use std::{env, net::SocketAddr, sync::Arc};
 
-use runway_selector_protocol::v1::{
-    AirportRequest, AirportSelection, GetAirportsResponse, RunwayAssignment, RunwayUse,
-    SelectRunwaysRequest, SelectRunwaysResponse, SelectionSource,
-    runway_selector_server::{RunwaySelector, RunwaySelectorServer},
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
 };
-use tonic::{Request, Response, Status, transport::Server};
+use runway_plugin_api::{
+    AirportSelectionRequest, AirportSelectionResult, RunwaySelectionsRequest,
+    RunwaySelectionsResponse, RunwayUse, RunwayUseEntry, SelectionSource, helpers::best_headwind,
+};
+use tokio::sync::Notify;
 
-const ICAOS: &[&str] = &["ZZZA", "ZZZB"];
-
-#[derive(Default)]
-pub struct ExampleArea;
-
-#[tonic::async_trait]
-impl RunwaySelector for ExampleArea {
-    async fn get_airports(&self, _: Request<()>) -> Result<Response<GetAirportsResponse>, Status> {
-        Ok(Response::new(GetAirportsResponse {
-            icaos: ICAOS.iter().map(|s| s.to_string()).collect(),
-        }))
-    }
-
-    async fn select_runways(
-        &self,
-        request: Request<SelectRunwaysRequest>,
-    ) -> Result<Response<SelectRunwaysResponse>, Status> {
-        let selections = request
-            .into_inner()
-            .airports
-            .into_iter()
-            .filter_map(pick)
-            .collect();
-        Ok(Response::new(SelectRunwaysResponse { selections }))
+fn pick(airport: &AirportSelectionRequest) -> AirportSelectionResult {
+    match best_headwind(&airport.runways, 0) {
+        Some(best) => AirportSelectionResult {
+            icao: airport.icao.clone(),
+            handled: true,
+            source: SelectionSource::Metar,
+            runway_uses: vec![RunwayUseEntry {
+                runway: best.identifier.clone(),
+                use_: RunwayUse::Both,
+            }],
+            tags: vec![],
+        },
+        // No usable wind: let the host use its defaults for this airport.
+        None => AirportSelectionResult {
+            icao: airport.icao.clone(),
+            handled: false,
+            source: SelectionSource::Metar,
+            runway_uses: vec![],
+            tags: vec![],
+        },
     }
 }
 
-fn pick(airport: AirportRequest) -> Option<AirportSelection> {
-    if !airport.atis_runways.is_empty() {
-        return Some(AirportSelection {
-            icao: airport.icao,
-            source: SelectionSource::Atis as i32,
-            runways: airport.atis_runways,
-        });
-    }
-
-    let best = airport
-        .runways
-        .iter()
-        .filter(|r| r.wind_components.is_some())
-        .max_by_key(|r| r.wind_components.as_ref().unwrap().headwind_kt)?;
-
-    Some(AirportSelection {
-        icao: airport.icao,
-        source: SelectionSource::Metar as i32,
-        runways: vec![RunwayAssignment {
-            identifier: best.identifier.clone(),
-            r#use: RunwayUse::Both as i32,
-        }],
+async fn runway_selections(
+    Json(request): Json<RunwaySelectionsRequest>,
+) -> Json<RunwaySelectionsResponse> {
+    Json(RunwaySelectionsResponse {
+        results: request.airports.iter().map(pick).collect(),
     })
+}
+
+async fn shutdown(State(notify): State<Arc<Notify>>) -> StatusCode {
+    notify.notify_one();
+    StatusCode::OK
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let port: u16 = env::var("RUNWAY_SELECTOR_PORT")?.parse()?;
+
+    let notify = Arc::new(Notify::new());
+    let app = Router::new()
+        .route("/health", get(|| async { StatusCode::OK }))
+        .route("/runway-selections", post(runway_selections))
+        .route("/shutdown", post(shutdown))
+        .with_state(notify.clone());
+
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let (health, health_svc) = tonic_health::server::health_reporter();
-    health
-        .set_serving::<RunwaySelectorServer<ExampleArea>>()
-        .await;
-
-    Server::builder()
-        .add_service(health_svc)
-        .add_service(RunwaySelectorServer::new(ExampleArea))
-        .serve_with_shutdown(addr, shutdown_signal())
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { notify.notified().await })
         .await?;
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
 }

@@ -11,8 +11,7 @@ name = "area_example_rust"
 path = "src/main.rs"
 
 [dependencies]
-runway_selector_protocol = { path = "../../runway_selector_protocol" }
+runway_plugin_api = { path = "../../runway_plugin_api" }
 
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
-tonic = { workspace = true }
-tonic-health = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "net"] }

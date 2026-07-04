@@ -6,7 +6,7 @@ A 100-line Rust area plugin. Use as a starting template.
 
 ```text
 Cargo.toml
-src/main.rs               # the gRPC server
+src/main.rs               # the HTTP/JSON plugin server
 package/
     manifest.toml         # runtime = "rust", entry = "area_example_rust"
     area.toml

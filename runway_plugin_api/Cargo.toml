@@ -1,0 +1,21 @@
+[package]
+name = "runway_plugin_api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP/JSON contract and selection helpers for runway-selector area plugins"
+
+[features]
+openapi = ["dep:utoipa"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { version = "5", optional = true }
+
+[[bin]]
+name = "generate_openapi"
+path = "src/bin/generate_openapi.rs"
+required-features = ["openapi"]

@@ -1,0 +1,7 @@
+name = "example-deno"
+version = "0.1.0"
+display_name = "Example (TypeScript / Deno)"
+description = "Minimal TypeScript area plugin. Picks the runway with the strongest headwind."
+runtime = "deno"
+entry = "server.ts"
+supported_icaos = ["ZZZA", "ZZZB"]

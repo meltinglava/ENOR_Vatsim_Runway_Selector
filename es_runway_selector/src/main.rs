@@ -58,6 +58,8 @@ fn get_target() -> &'static str {
         "linux-musl"
     } else if cfg!(target_os = "linux") {
         "x86_64-unknown-linux-gnu"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
     } else if cfg!(target_os = "macos") {
         "x86_64-apple-darwin"
     } else {
@@ -90,7 +92,15 @@ fn update() -> Result<bool> {
     })
 }
 
-async fn run(cli: Cli) -> Result<()> {
+/// Everything that must happen *before* the Tokio runtime exists: config
+/// discovery can open a native folder-picker dialog, and blocking UI inside
+/// the runtime freezes on Windows. Keep this synchronous.
+struct PreparedStartup {
+    config: Arc<ESConfig>,
+    installed_areas: Vec<area_runtime::InstalledArea>,
+}
+
+fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
     let top_level = area_cli::load_top_level_config().ok();
     let install_dir = top_level.as_ref().map(area_cli::resolved_install_dir);
 
@@ -126,7 +136,21 @@ async fn run(cli: Cli) -> Result<()> {
         }
     }
 
-    // Pick the area whose sector_file_prefix owns this sector file.
+    Ok(PreparedStartup {
+        config,
+        installed_areas,
+    })
+}
+
+async fn run(prepared: PreparedStartup) -> Result<()> {
+    let PreparedStartup {
+        config,
+        installed_areas,
+    } = prepared;
+
+    // Host-side configuration (METAR feeds, ignore list, defaults) comes from
+    // the area whose sector_file_prefix owns this sector file. Runway
+    // *selection* below runs through every installed area plugin.
     let active_area =
         area_runtime::match_area_for_prefix(&installed_areas, config.get_sector_file_prefix());
     if active_area.is_none() {
@@ -174,13 +198,14 @@ async fn run(cli: Cli) -> Result<()> {
         warn!(error = ?e, "ATIS fetch failed; continuing without ATIS-derived selections");
     }
 
-    // Hand selection off to the area plugin (if one is installed).
-    // ATIS-derived runways are already in `airports` and get passed to the
-    // plugin so it can decide whether to honour them or override.
-    if let Some(area) = active_area
-        && let Err(e) = plugin_runner::run_area_selection(&mut airports, area).await
-    {
-        warn!(area = %area.manifest.name, error = ?e, "Area plugin failed; falling back to defaults only");
+    // Hand selection off to the installed area plugins. ATIS-derived runways
+    // are already applied host-side; plugins only see the remaining airports.
+    // Failures degrade to defaults and are surfaced to the user.
+    let statuses = plugin_runner::run_area_selections(&mut airports, &installed_areas).await;
+    for status in &statuses {
+        if matches!(status.outcome, plugin_runner::AreaRunOutcome::Failed(_)) {
+            eprintln!("WARNING: {}", status.user_message());
+        }
     }
 
     airports.apply_default_runways(default_runways);
@@ -342,9 +367,15 @@ fn main() -> Result<()> {
         Some(Command::Area { cmd }) => runtime
             .block_on(area_cli::run_area_command(cmd))
             .context("Running area subcommand")?,
-        None => runtime
-            .block_on(run(cli))
-            .context("Running runway selector")?,
+        None => {
+            // Config discovery may open a folder-picker dialog; run it before
+            // entering the runtime so blocking UI cannot freeze the reactor
+            // (this deadlocked on Windows when done inside block_on).
+            let prepared = prepare_startup(&cli).context("Preparing startup")?;
+            runtime
+                .block_on(run(prepared))
+                .context("Running runway selector")?
+        }
     }
     Ok(())
 }

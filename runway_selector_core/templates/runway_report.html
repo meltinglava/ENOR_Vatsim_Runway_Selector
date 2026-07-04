@@ -196,6 +196,25 @@
 
          .comp-width { width: 20ch; }
 
+         .tags {
+             vertical-align: middle;
+             text-align: center;
+             font-size: 14px;
+             white-space: nowrap;
+         }
+
+         .tag {
+             display: inline-block;
+             padding: 0 2px;
+             cursor: help;
+         }
+
+         .tag-conflict {
+             filter: grayscale(30%);
+             outline: 1px dashed currentColor;
+             border-radius: 4px;
+         }
+
          /* column sizing */
          col.col-icao  { width: 6ch; }
          col.col-rwy   { width: 20ch; }
@@ -204,6 +223,7 @@
          col.col-wind-x-left { width: 18px; }
          col.col-wind-x-val { width: 3ch; }
          col.col-wind-x-right { width: 18px; }
+         col.col-tags  { width: 5ch; }
          col.col-metar { width: auto; }
 
          th.comp-width {
@@ -253,6 +273,7 @@
                         <col class="col-wind-x-left">
                         <col class="col-wind-x-val">
                         <col class="col-wind-x-right">
+                        <col class="col-tags">
                         <col class="col-metar">
                     </colgroup>
                     <thead>
@@ -260,6 +281,7 @@
                             <th>ICAO</th>
                             <th>Runways</th>
                             <th colspan="5" class="comp-width">Components</th>
+                            <th>Tags</th>
                             <th>METAR</th>
                         </tr>
                     </thead>
@@ -309,6 +331,7 @@
                                 {% endif %}
                             </td>
                             {% if loop.first %}
+                            <td class="tags" rowspan="{{ a.line_count }}">{% for tag in a.tags %}<span class="tag {% if tag.conflict %}tag-conflict{% endif %}" title="{{ tag.label }}">{{ tag.symbol }}</span>{% endfor %}</td>
                             <td class="metar" rowspan="{{ a.line_count }}">{{ a.metar }}</td>
                             {% endif %}
                         </tr>

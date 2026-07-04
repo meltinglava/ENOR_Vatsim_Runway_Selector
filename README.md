@@ -157,7 +157,7 @@ Binary lands at `target/release/es_runway_selector`.
 ## Writing your own area
 
 To add a new FIR — or fork an existing area for your group — see
-[**runway_selector_protocol/README.md**](runway_selector_protocol/README.md).
+[**runway_plugin_api/README.md**](runway_plugin_api/README.md).
 
 ---
 

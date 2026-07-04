@@ -1,16 +1,19 @@
 //! Plugin lifecycle: spawn an area's subprocess, wait for it to come up,
-//! talk to it over gRPC, shut it down.
+//! talk to it over HTTP/JSON, shut it down.
 //!
 //! Each area ships a `manifest.toml` declaring a [`Runtime`] and an `entry`
 //! path. For Rust areas we exec the entry directly; for Python / Node / Deno
 //! we delegate to [`mise`](https://mise.jdx.dev/) so end users do not have to
 //! install language runtimes manually.
 //!
-//! Once the child is alive, we wait until its
-//! `grpc.health.v1.Health/Check` reports `SERVING` and then hand back a
-//! [`PluginHandle`] holding the channel. The handle owns the child: dropping
-//! it without calling [`PluginHandle::shutdown`] still kills the subprocess
+//! Once the child is alive, we poll `GET /health` until it returns `200` and
+//! then hand back a [`PluginHandle`]. The handle owns the child: dropping it
+//! without calling [`PluginHandle::shutdown`] still kills the subprocess
 //! best-effort so a host panic does not leak processes.
+//!
+//! Graceful shutdown is transport-level so it works on Windows too (where
+//! there is no SIGTERM): [`PluginHandle::shutdown`] first POSTs `/shutdown`,
+//! waits, escalates to SIGTERM on Unix, and finally hard-kills.
 
 use std::{
     net::TcpListener,
@@ -21,7 +24,8 @@ use std::{
 
 use std::io;
 
-use runway_selector_core::area_config::{AreaManifest, Runtime};
+use runway_plugin_api::{RunwaySelectionsRequest, RunwaySelectionsResponse};
+use runway_selector_area_config::{AreaManifest, Runtime};
 use semver::Version;
 use thiserror::Error;
 use tokio::{
@@ -30,17 +34,16 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use tonic::transport::{Channel, Endpoint};
-use tonic_health::pb::{
-    HealthCheckRequest, health_check_response::ServingStatus, health_client::HealthClient,
-};
 
 /// Default per-step wait between health-check polls.
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// Hard ceiling on how long we wait for a plugin to report `SERVING`.
+/// Hard ceiling on how long we wait for a plugin to report healthy.
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-/// Time between SIGTERM and the fallback SIGKILL during graceful shutdown.
+/// Time between each graceful-shutdown escalation step (`POST /shutdown` →
+/// SIGTERM → SIGKILL).
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// Ceiling on a single `POST /runway-selections` round-trip.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum PluginError {
@@ -52,14 +55,18 @@ pub enum PluginError {
     MiseMissing { runtime: Runtime },
     #[error("Plugin entry point does not exist: {0}")]
     EntryMissing(PathBuf),
-    #[error("gRPC connection to plugin failed: {0}")]
-    Transport(#[from] tonic::transport::Error),
-    #[error("gRPC health check failed: {0}")]
-    Health(#[from] tonic::Status),
-    #[error("Timed out after {0:?} waiting for plugin to report SERVING")]
+    #[error("HTTP request to plugin failed: {0}")]
+    Transport(#[from] reqwest::Error),
+    #[error("Plugin returned HTTP {status} from {endpoint}: {body}")]
+    ErrorStatus {
+        endpoint: String,
+        status: u16,
+        body: String,
+    },
+    #[error("Timed out after {0:?} waiting for plugin /health to return 200")]
     StartupTimeout(Duration),
     #[error(
-        "Plugin {area_name:?} exited during startup with {status} before reporting SERVING.{stderr_hint}",
+        "Plugin {area_name:?} exited during startup with {status} before becoming healthy.{stderr_hint}",
         stderr_hint = stderr_hint(stderr_tail)
     )]
     StartupExit {
@@ -86,23 +93,59 @@ fn stderr_hint(stderr_tail: &str) -> String {
 
 pub type PluginResult<T> = Result<T, PluginError>;
 
-/// A live plugin subprocess plus the gRPC channel to it.
+/// A live plugin subprocess plus the HTTP client pointed at it.
 ///
 /// The handle owns the child process and the tasks forwarding its stdio into
-/// `tracing`. Dropping the handle kills the child best-effort with SIGKILL;
-/// prefer [`PluginHandle::shutdown`] for a graceful SIGTERM-then-SIGKILL exit.
+/// `tracing`. Dropping the handle kills the child best-effort; prefer
+/// [`PluginHandle::shutdown`] for a graceful `/shutdown` → SIGTERM → kill exit.
 pub struct PluginHandle {
     pub area_name: String,
     pub port: u16,
-    pub channel: Channel,
+    base_url: String,
+    client: reqwest::Client,
     child: Option<Child>,
     stdout_task: Option<JoinHandle<()>>,
     stderr_task: Option<JoinHandle<()>>,
 }
 
 impl PluginHandle {
-    /// Gracefully terminate the child: send SIGTERM (or `start_kill` on
-    /// Windows), wait up to [`SHUTDOWN_GRACE`], then SIGKILL on timeout.
+    /// Base URL the plugin serves on, e.g. `http://127.0.0.1:49231`.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// POST the batch selection request and return the parsed response.
+    /// Non-2xx statuses are surfaced as [`PluginError::ErrorStatus`] with the
+    /// response body attached — a plugin 500 must not degrade opaquely.
+    pub async fn select_runways(
+        &self,
+        request: &RunwaySelectionsRequest,
+    ) -> PluginResult<RunwaySelectionsResponse> {
+        let endpoint = format!("{}/runway-selections", self.base_url);
+        let response = self
+            .client
+            .post(&endpoint)
+            .timeout(REQUEST_TIMEOUT)
+            .json(request)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(PluginError::ErrorStatus {
+                endpoint,
+                status: status.as_u16(),
+                body,
+            });
+        }
+        Ok(response.json().await?)
+    }
+
+    /// Gracefully terminate the child, escalating step by step:
+    /// 1. `POST /shutdown` (works on every platform, including Windows);
+    /// 2. after [`SHUTDOWN_GRACE`], SIGTERM (Unix only);
+    /// 3. after another [`SHUTDOWN_GRACE`], hard kill.
     pub async fn shutdown(mut self) -> PluginResult<ExitStatus> {
         let Some(mut child) = self.child.take() else {
             return Err(PluginError::Io(io::Error::other(
@@ -110,15 +153,35 @@ impl PluginHandle {
             )));
         };
 
-        send_graceful_terminate(&child);
+        let shutdown_url = format!("{}/shutdown", self.base_url);
+        let posted = self
+            .client
+            .post(&shutdown_url)
+            .timeout(SHUTDOWN_GRACE)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if !posted {
+            tracing::debug!(
+                area = %self.area_name,
+                "Plugin did not accept POST /shutdown; falling back to signals"
+            );
+        }
 
-        let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+        let mut status = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+
+        if status.is_err() {
+            send_graceful_terminate(&child);
+            status = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+        }
+
+        let status = match status {
             Ok(res) => res?,
             Err(_) => {
                 tracing::warn!(
                     area = %self.area_name,
-                    "Plugin did not exit within {:?} of SIGTERM; sending SIGKILL",
-                    SHUTDOWN_GRACE
+                    "Plugin did not exit after /shutdown and SIGTERM; killing"
                 );
                 child.start_kill()?;
                 child.wait().await?
@@ -138,10 +201,10 @@ impl PluginHandle {
 impl Drop for PluginHandle {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            // shutdown() wasn't called — fall back to SIGKILL so a host panic
-            // does not leak the subprocess. tokio's Child does not kill on
-            // drop by default; we set `kill_on_drop(true)` on the command too
-            // as a belt-and-braces.
+            // shutdown() wasn't called — fall back to a hard kill so a host
+            // panic does not leak the subprocess. tokio's Child does not kill
+            // on drop by default; we set `kill_on_drop(true)` on the command
+            // too as a belt-and-braces.
             let _ = child.start_kill();
         }
     }
@@ -164,9 +227,8 @@ fn send_graceful_terminate(child: &Child) {
 
 #[cfg(not(unix))]
 fn send_graceful_terminate(_child: &Child) {
-    // On Windows there is no SIGTERM; the SIGKILL fallback in `shutdown` is
-    // the only termination path. Plugins on Windows should treat the channel
-    // closing as the shutdown signal.
+    // On Windows there is no SIGTERM; `POST /shutdown` (already sent by
+    // `shutdown`) is the graceful path and the hard kill is the fallback.
 }
 
 /// Build (but do not yet spawn) the command that runs a plugin's entry
@@ -257,8 +319,8 @@ pub fn check_host_compatibility(
     Ok(())
 }
 
-/// Spawn the plugin, wait for `grpc.health.v1` to report `SERVING`, and
-/// return the handle. Uses [`DEFAULT_STARTUP_TIMEOUT`] for the health wait.
+/// Spawn the plugin, wait for `GET /health` to return 200, and return the
+/// handle. Uses [`DEFAULT_STARTUP_TIMEOUT`] for the health wait.
 ///
 /// Verifies `manifest.min_core_version` against `host_version` before
 /// spawning — an incompatible plugin is reported, not run.
@@ -291,10 +353,18 @@ pub async fn spawn_plugin_with_timeout(
     let stderr_task =
         stderr.map(|s| spawn_stderr_forwarder(area_name.clone(), s, stderr_tail.clone()));
 
-    let endpoint: Endpoint = format!("http://127.0.0.1:{port}").parse()?;
+    let base_url = format!("http://127.0.0.1:{port}");
+    // Plugin traffic is plain HTTP on loopback, but reqwest's rustls backend
+    // still insists on a process-wide crypto provider. Install ring if the
+    // embedding application hasn't picked one — ignore the error if it has.
+    static CRYPTO_PROVIDER: std::sync::Once = std::sync::Once::new();
+    CRYPTO_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    let client = reqwest::Client::builder().no_proxy().build()?;
 
-    let channel = match wait_for_serving(&mut child, endpoint, startup_timeout).await {
-        Ok(channel) => channel,
+    match wait_for_healthy(&mut child, &client, &base_url, startup_timeout).await {
+        Ok(()) => {}
         Err(PluginError::StartupExit {
             area_name: name,
             status,
@@ -319,24 +389,27 @@ pub async fn spawn_plugin_with_timeout(
             let _ = child.start_kill();
             return Err(other);
         }
-    };
+    }
 
     Ok(PluginHandle {
         area_name,
         port,
-        channel,
+        base_url,
+        client,
         child: Some(child),
         stdout_task,
         stderr_task,
     })
 }
 
-async fn wait_for_serving(
+async fn wait_for_healthy(
     child: &mut Child,
-    endpoint: Endpoint,
+    client: &reqwest::Client,
+    base_url: &str,
     timeout: Duration,
-) -> PluginResult<Channel> {
+) -> PluginResult<()> {
     let deadline = tokio::time::Instant::now() + timeout;
+    let health_url = format!("{base_url}/health");
 
     loop {
         // First check whether the child has exited — `try_wait` is
@@ -349,19 +422,15 @@ async fn wait_for_serving(
             });
         }
 
-        if let Ok(channel) = endpoint.connect().await {
-            let mut client = HealthClient::new(channel.clone());
-            match client
-                .check(HealthCheckRequest {
-                    service: String::new(),
-                })
-                .await
-            {
-                Ok(resp) if resp.get_ref().status() == ServingStatus::Serving => {
-                    return Ok(channel);
-                }
-                Ok(_) | Err(_) => {}
-            }
+        let probe = client
+            .get(&health_url)
+            .timeout(HEALTH_POLL_INTERVAL.max(Duration::from_millis(500)))
+            .send()
+            .await;
+        if let Ok(resp) = probe
+            && resp.status().is_success()
+        {
+            return Ok(());
         }
 
         if tokio::time::Instant::now() >= deadline {
@@ -440,10 +509,6 @@ pub fn mise_available() -> bool {
     which::which("mise").is_ok()
 }
 
-// Re-export the standard health types so callers don't need a direct
-// `tonic-health` dependency.
-pub use tonic_health::pb as health_pb;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,6 +561,18 @@ mod tests {
         let manifest = dummy_manifest("enor", Runtime::Rust, "does_not_exist");
         let err = build_command(&manifest, dir.path(), 50_000).unwrap_err();
         assert!(matches!(err, PluginError::EntryMissing(_)));
+    }
+
+    #[test]
+    fn build_command_handles_paths_with_spaces() {
+        let dir = tempdir().unwrap();
+        let spaced = dir.path().join("area with spaces");
+        fs::create_dir_all(&spaced).unwrap();
+        let entry_path = write_entry(&spaced, "my area binary");
+        let manifest = dummy_manifest("spaced", Runtime::Rust, "my area binary");
+
+        let cmd = build_command(&manifest, &spaced, 50_000).unwrap();
+        assert_eq!(cmd.as_std().get_program(), entry_path.as_os_str());
     }
 
     #[test]

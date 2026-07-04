@@ -5,17 +5,17 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Subprocess lifecycle and gRPC client wiring for area plugins"
+description = "Subprocess lifecycle and HTTP/JSON client wiring for area plugins"
 
 [dependencies]
-runway_selector_core = { path = "../runway_selector_core" }
-runway_selector_protocol = { path = "../runway_selector_protocol" }
+runway_plugin_api = { path = "../runway_plugin_api" }
+runway_selector_area_config = { path = "../runway_selector_area_config" }
 
+reqwest = { workspace = true }
+rustls = { workspace = true }
 semver = "1.0.27"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time", "net", "io-util"] }
-tonic = { workspace = true }
-tonic-health = { workspace = true }
 tracing = { workspace = true }
 which = "8"
 

@@ -1,0 +1,586 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Runway Plugin API",
+    "description": "\nEndpoints your area plugin must implement.\n`es_runway_selector` spawns your binary/script with the environment variables\n`RUNWAY_SELECTOR_PORT` (HTTP port to bind on 127.0.0.1) and\n`RUNWAY_SELECTOR_AREA_DIR` (your installed package directory), waits for\n`GET /health` to return 200, then POSTs to `/runway-selections` once per run\nand finally POSTs `/shutdown`.\n",
+    "contact": {
+      "name": "meltinglava"
+    },
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "1"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Plugin API"
+        ],
+        "summary": "Health check — return 200 to indicate the plugin is ready to accept requests.",
+        "operationId": "plugin_health",
+        "responses": {
+          "200": {
+            "description": "Plugin is ready"
+          }
+        }
+      }
+    },
+    "/runway-selections": {
+      "post": {
+        "tags": [
+          "Plugin API"
+        ],
+        "summary": "Batch runway selection.",
+        "description": "`es_runway_selector` sends all airports it wants the plugin to decide\nin a single request. Return `handled: true` with `runway_uses` for\nairports you manage; return `handled: false` to let the host apply its\nown fallback for that airport only.",
+        "operationId": "plugin_runway_selections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunwaySelectionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunwaySelectionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shutdown": {
+      "post": {
+        "tags": [
+          "Plugin API"
+        ],
+        "summary": "Graceful shutdown request. Return 200 and then exit. Implementing this\nis the only way the host can shut you down gracefully on Windows.",
+        "operationId": "plugin_shutdown",
+        "responses": {
+          "200": {
+            "description": "Plugin will exit"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AirportSelectionRequest": {
+        "type": "object",
+        "description": "Per-airport data sent to the plugin.",
+        "required": [
+          "icao",
+          "runways"
+        ],
+        "properties": {
+          "icao": {
+            "type": "string",
+            "description": "ICAO airport identifier, e.g. \"ENGM\""
+          },
+          "metar": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetarData",
+                "description": "METAR data, if available."
+              }
+            ]
+          },
+          "runways": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunwayInfo"
+            },
+            "description": "All runway directions at this airport with pre-computed wind components."
+          }
+        }
+      },
+      "AirportSelectionResult": {
+        "type": "object",
+        "description": "Per-airport result from the plugin.",
+        "required": [
+          "icao",
+          "handled"
+        ],
+        "properties": {
+          "handled": {
+            "type": "boolean",
+            "description": "`true` if the plugin is handling this airport.\n`false` means the caller should use its own fallback logic."
+          },
+          "icao": {
+            "type": "string"
+          },
+          "runway_uses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunwayUseEntry"
+            },
+            "description": "Non-empty only when `handled` is `true`."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SelectionSource",
+            "description": "What the selection was derived from. The host uses this for its\nsource-priority table (ATIS > METAR > DEFAULT); ATIS never appears\nhere because the host applies ATIS itself."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SelectionTag"
+            },
+            "description": "Tags explaining and/or qualifying this selection. Empty when none apply."
+          }
+        }
+      },
+      "CloudCoverage": {
+        "type": "string",
+        "enum": [
+          "Few",
+          "Scattered",
+          "Broken",
+          "Overcast"
+        ]
+      },
+      "CloudData": {
+        "type": "object",
+        "properties": {
+          "cloud_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cloud type, e.g. \"CB\", \"TCU\". `None` if not reported or unreadable."
+          },
+          "coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CloudCoverage",
+                "description": "Cloud coverage. `None` if unreadable (reported as ///)."
+              }
+            ]
+          },
+          "height_hundreds_ft": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Cloud base in hundreds of feet. `None` if unreadable (reported as ///)."
+          }
+        }
+      },
+      "CrosswindDirection": {
+        "type": "string",
+        "enum": [
+          "Left",
+          "Right",
+          "Variable"
+        ]
+      },
+      "MetarData": {
+        "type": "object",
+        "description": "METAR data: raw string plus optionally parsed fields.",
+        "required": [
+          "raw"
+        ],
+        "properties": {
+          "parsed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ParsedMetar"
+              }
+            ]
+          },
+          "raw": {
+            "type": "string"
+          }
+        }
+      },
+      "ParsedMetar": {
+        "type": "object",
+        "description": "Structured METAR content.",
+        "required": [
+          "is_cavok"
+        ],
+        "properties": {
+          "clouds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudData"
+            }
+          },
+          "dew_point_c": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Dew point in °C. `None` if not reported or unreadable."
+          },
+          "is_cavok": {
+            "type": "boolean",
+            "description": "True if METAR reports CAVOK (no significant weather, visibility > 10 km)."
+          },
+          "qnh_hpa": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "QNH in hPa. `None` if not reported or unreadable.",
+            "minimum": 0
+          },
+          "rvr": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RvrData"
+            }
+          },
+          "temperature_c": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Temperature in °C. `None` if not reported or unreadable."
+          },
+          "vertical_visibility_hundreds_ft": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Vertical visibility in hundreds of feet. `None` if VV not reported.\nA value of 0 means VV was reported but the height was unreadable (VV///)."
+          },
+          "visibility_meters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Prevailing visibility in metres. `None` if CAVOK or not reported.",
+            "minimum": 0
+          },
+          "weather_phenomena": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeatherPhenomenonData"
+            }
+          },
+          "wind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WindData"
+              }
+            ]
+          }
+        }
+      },
+      "RunwayInfo": {
+        "type": "object",
+        "description": "A single runway direction with pre-computed wind components from the current METAR.\n\nWind components are `None` when no METAR is available.",
+        "required": [
+          "identifier",
+          "heading"
+        ],
+        "properties": {
+          "crosswind_direction": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CrosswindDirection",
+                "description": "Direction the crosswind comes from relative to the runway centerline."
+              }
+            ]
+          },
+          "crosswind_kt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Max crosswind magnitude in knots (always ≥ 0). `None` if no METAR."
+          },
+          "heading": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Runway heading in degrees true (0–359)",
+            "minimum": 0
+          },
+          "headwind_kt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Max headwind in knots. Positive = headwind, negative = tailwind. `None` if no METAR."
+          },
+          "identifier": {
+            "type": "string",
+            "description": "Runway identifier, e.g. \"01L\", \"19R\", \"18\""
+          },
+          "tailwind_kt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Max tailwind in knots (always ≥ 0). `None` if no METAR."
+          }
+        }
+      },
+      "RunwaySelectionsRequest": {
+        "type": "object",
+        "description": "Batch request for runway selections sent to the plugin.",
+        "required": [
+          "timestamp_utc",
+          "area_timezone",
+          "airports"
+        ],
+        "properties": {
+          "airports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirportSelectionRequest"
+            }
+          },
+          "area_timezone": {
+            "type": "string",
+            "description": "IANA timezone for the area (e.g. `\"Europe/Oslo\"`), for any\ntime-of-day rules (night modes, LVP windows, …)."
+          },
+          "timestamp_utc": {
+            "type": "string",
+            "description": "Current UTC time as an RFC 3339 string, e.g. `\"2026-05-14T10:20:00Z\"`.\nPlugins must use this — never the wall clock — so selections are a\npure function of the request."
+          }
+        }
+      },
+      "RunwaySelectionsResponse": {
+        "type": "object",
+        "description": "Plugin response for all airports in the batch.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AirportSelectionResult"
+            }
+          }
+        }
+      },
+      "RunwayUse": {
+        "type": "string",
+        "enum": [
+          "Departing",
+          "Arriving",
+          "Both"
+        ]
+      },
+      "RunwayUseEntry": {
+        "type": "object",
+        "required": [
+          "runway",
+          "use"
+        ],
+        "properties": {
+          "runway": {
+            "type": "string",
+            "description": "Runway identifier, e.g. \"01L\""
+          },
+          "use": {
+            "$ref": "#/components/schemas/RunwayUse"
+          }
+        }
+      },
+      "RvrData": {
+        "type": "object",
+        "required": [
+          "runway"
+        ],
+        "properties": {
+          "meters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "RVR value in metres. `None` if unreadable (reported as /////).",
+            "minimum": 0
+          },
+          "runway": {
+            "type": "string",
+            "description": "Runway designator, e.g. \"28L\""
+          }
+        }
+      },
+      "SelectionSource": {
+        "type": "string",
+        "enum": [
+          "Metar",
+          "Default"
+        ]
+      },
+      "SelectionTag": {
+        "type": "object",
+        "description": "A tag attached to a runway selection, transmitted in plugin responses.\n\n`conflict = false` → the tag *explains* the selection (a reason).\n`conflict = true`  → the tag marks a *negative factor that was accepted*\nagainst the chosen runway (e.g. tailwind accepted during segregated ops).",
+        "required": [
+          "id",
+          "conflict",
+          "symbol",
+          "label"
+        ],
+        "properties": {
+          "conflict": {
+            "type": "boolean",
+            "description": "Whether this tag represents an accepted negative factor."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier; matches a [`Tag::id`] in the registry."
+          },
+          "label": {
+            "type": "string",
+            "description": "Full label used as a tooltip (populated from [`Tag`])."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Unicode symbol / emoji shown in the report (populated from [`Tag`])."
+          }
+        }
+      },
+      "WeatherDescriptor": {
+        "type": "string",
+        "enum": [
+          "Shallow",
+          "Partial",
+          "Patches",
+          "LowDrifting",
+          "Blowing",
+          "Shower",
+          "Thunderstorm",
+          "Freezing"
+        ]
+      },
+      "WeatherIntensity": {
+        "type": "string",
+        "enum": [
+          "Light",
+          "Heavy",
+          "Vicinity"
+        ]
+      },
+      "WeatherPhenomenonData": {
+        "type": "object",
+        "properties": {
+          "descriptors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeatherDescriptor"
+            }
+          },
+          "intensity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WeatherIntensity"
+              }
+            ]
+          },
+          "phenomena": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "METAR weather codes: \"DZ\", \"RA\", \"SN\", \"FG\", etc."
+          }
+        }
+      },
+      "WindData": {
+        "type": "object",
+        "required": [
+          "is_variable",
+          "speed_kt"
+        ],
+        "properties": {
+          "direction_degrees": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Wind direction in degrees true (0–359). `None` if variable or unreadable.",
+            "minimum": 0
+          },
+          "gust_kt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Gust speed in knots, if reported.",
+            "minimum": 0
+          },
+          "is_variable": {
+            "type": "boolean",
+            "description": "True when direction is explicitly reported as variable (VRB)."
+          },
+          "speed_kt": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Wind speed in knots.",
+            "minimum": 0
+          },
+          "variable_from_degrees": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Start of variable wind range, e.g. 250 in \"250V310\".",
+            "minimum": 0
+          },
+          "variable_to_degrees": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "End of variable wind range, e.g. 310 in \"250V310\".",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Plugin API",
+      "description": "Endpoints your plugin must implement"
+    }
+  ]
+}

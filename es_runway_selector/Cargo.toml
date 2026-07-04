@@ -16,14 +16,12 @@ indexmap = { workspace = true }
 itertools = { workspace = true }
 jiff = { workspace = true }
 regex = "1.12.3"
-prost-types = { workspace = true }
+runway_plugin_api = { path = "../runway_plugin_api" }
 runway_selector_area_config = { path = "../runway_selector_area_config" }
 runway_selector_areas = { path = "../runway_selector_areas" }
 runway_selector_core = { path = "../runway_selector_core" }
 runway_selector_plugin_host = { path = "../runway_selector_plugin_host" }
-runway_selector_protocol = { path = "../runway_selector_protocol" }
 semver = "1.0.27"
-tonic = { workspace = true }
 self_update = { version = "0.44.0", features = ["reqwest", "compression-zip-deflate", "archive-tar"], default-features = false }
 rustls = { workspace = true }
 serde = { workspace = true }

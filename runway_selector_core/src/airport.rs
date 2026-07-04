@@ -34,6 +34,10 @@ pub struct Airport {
     pub metar: Option<Metar>,
     pub runways: Vec<Runway>,
     pub runways_in_use: IndexMap<RunwayInUseSource, IndexMap<String, RunwayUse>>,
+    /// Machine-readable tags an area plugin attached to its selection,
+    /// rendered in the HTML runway report to explain *why* runways were
+    /// chosen. Empty when no plugin ran or none applied.
+    pub selection_tags: Vec<runway_plugin_api::SelectionTag>,
 }
 
 #[allow(dead_code)] // planned for runway report output

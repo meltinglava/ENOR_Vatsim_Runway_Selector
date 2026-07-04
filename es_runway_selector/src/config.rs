@@ -284,9 +284,31 @@ fn get_app_launchers(config_file_path: &Path) -> IndexSet<AppLauncher> {
         return IndexSet::new();
     }
 
-    let raw_app_launchers_file = fs::read_to_string(&app_launchers_file_path).unwrap_or_log();
+    let raw_app_launchers_file = match fs::read_to_string(&app_launchers_file_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            warn!(
+                path = %app_launchers_file_path.display(),
+                error = %e,
+                "Failed to read app_launchers.toml; continuing without app launchers"
+            );
+            return IndexSet::new();
+        }
+    };
 
-    let toml_file: toml::Value = toml::from_str(&raw_app_launchers_file).unwrap_or_log();
+    let toml_file: toml::Value = match toml::from_str(&raw_app_launchers_file) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                path = %app_launchers_file_path.display(),
+                error = %e,
+                "Failed to parse app_launchers.toml; continuing without app launchers. \
+                 Hint: on Windows, backslashes in paths must be escaped (\\\\) or the \
+                 path quoted with single quotes"
+            );
+            return IndexSet::new();
+        }
+    };
 
     let toml::Value::Table(map) = &toml_file else {
         warn!(

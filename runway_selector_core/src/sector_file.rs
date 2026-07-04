@@ -40,6 +40,7 @@ pub fn load_airports_from_sct_runway_section<R: Read>(
             metar: None,
             runways: Vec::new(),
             runways_in_use: IndexMap::new(),
+            selection_tags: Vec::new(),
         });
 
         let runway = Runway {

@@ -575,11 +575,15 @@ impl Airports {
                 let airport = self.airports.get(icao);
                 let lines = Self::build_report_lines_for_row(airport, runways);
                 let metar = self.metar_text_for_airport(icao);
+                let tags = airport
+                    .map(|a| a.selection_tags.clone())
+                    .unwrap_or_default();
 
                 airports.push(AirportRunwayView {
                     icao: icao.clone(),
                     line_count: lines.len(),
                     lines,
+                    tags,
                     metar,
                 });
             }
@@ -626,6 +630,7 @@ pub struct AirportRunwayView {
     pub icao: String,
     pub line_count: usize,
     pub lines: Vec<AirportRunwayLineView>,
+    pub tags: Vec<runway_plugin_api::SelectionTag>,
     pub metar: String,
 }
 
@@ -687,6 +692,7 @@ pub(crate) mod tests {
             metar: Some(metar),
             runways: airport.runways,
             runways_in_use: IndexMap::new(),
+            selection_tags: Vec::new(),
         }
     }
 
