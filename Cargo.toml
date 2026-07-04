@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "area_enor",
     "es_runway_selector",
+    "examples/area_example_rust",
     "metar_decoder",
     "find_bad_metar_job",
     "runway_selector_area_config",

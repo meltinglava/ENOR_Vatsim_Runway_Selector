@@ -112,6 +112,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "area_example_rust"
+version = "0.0.1-alpha.53"
+dependencies = [
+ "runway_selector_protocol",
+ "tokio",
+ "tonic",
+ "tonic-health",
+]
+
+[[package]]
 name = "askama"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

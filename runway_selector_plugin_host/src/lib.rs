@@ -198,7 +198,15 @@ pub fn build_command(
             };
             let mut c = tokio::process::Command::new(mise);
             // `mise exec <runtime> -- <interpreter> <entry>`
-            c.args(["exec", interpreter, "--", interpreter]).arg(&entry);
+            c.args(["exec", interpreter, "--", interpreter]);
+            // Deno requires explicit permission grants; without them, a script
+            // launched non-interactively just fails when it tries to open a
+            // socket. Areas run sandboxed under the host already (separate
+            // subprocess, ephemeral lifetime), so grant the lot.
+            if matches!(manifest.runtime, Runtime::Deno) {
+                c.arg("run").arg("-A");
+            }
+            c.arg(&entry);
             c
         }
     };
@@ -514,6 +522,28 @@ mod tests {
         assert_eq!(args[1], "python");
         assert_eq!(args[2], "--");
         assert_eq!(args[3], "python");
+    }
+
+    #[test]
+    fn build_command_for_deno_passes_allow_all_to_run() {
+        if !mise_available() {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        write_entry(dir.path(), "server.ts");
+        let manifest = dummy_manifest("deno_area", Runtime::Deno, "server.ts");
+
+        let cmd = build_command(&manifest, dir.path(), 50_000).unwrap();
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            &args[0..6],
+            &["exec", "deno", "--", "deno", "run", "-A"],
+            "deno entries need explicit permissions or they fail non-interactively",
+        );
     }
 
     #[test]
