@@ -1,0 +1,7 @@
+name = "example-rust"
+version = "0.1.0"
+display_name = "Example (Rust)"
+description = "Minimal Rust area plugin. Picks the runway with the strongest headwind."
+runtime = "rust"
+entry = "area_example_rust"   # use "area_example_rust.exe" on Windows tarballs
+supported_icaos = ["ZZZA", "ZZZB"]

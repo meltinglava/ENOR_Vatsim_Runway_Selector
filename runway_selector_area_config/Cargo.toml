@@ -1,0 +1,19 @@
+[package]
+name = "runway_selector_area_config"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Layered area-package configuration types (manifest, area.toml, profiles, top-level)"
+
+[dependencies]
+indexmap = { workspace = true }
+semver = { version = "1.0.27", features = ["serde"] }
+serde = { workspace = true }
+serde_with = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.27.0"

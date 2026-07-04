@@ -1,0 +1,7 @@
+name = "example-python"
+version = "0.1.0"
+display_name = "Example (Python)"
+description = "Minimal Python area plugin. Picks the runway with the strongest headwind."
+runtime = "python"
+entry = "server.py"
+supported_icaos = ["ZZZA", "ZZZB"]

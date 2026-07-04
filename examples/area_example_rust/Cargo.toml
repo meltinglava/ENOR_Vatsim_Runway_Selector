@@ -1,0 +1,18 @@
+[package]
+name = "area_example_rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Minimal Rust area plugin example for es_runway_selector"
+
+[[bin]]
+name = "area_example_rust"
+path = "src/main.rs"
+
+[dependencies]
+runway_selector_protocol = { path = "../../runway_selector_protocol" }
+
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tonic = { workspace = true }
+tonic-health = { workspace = true }

@@ -1,0 +1,7 @@
+metar_urls         = []         # ZZZA / ZZZB are made-up; real areas list VATSIM URLs here
+time_zone          = "UTC"
+sector_file_prefix = "EXAM"
+
+[default_runways]
+ZZZA = 18
+ZZZB = 27

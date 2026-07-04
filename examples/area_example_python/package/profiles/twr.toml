@@ -1,0 +1,4 @@
+name         = "twr"
+display_name = "Tower / GND"
+prf_files    = ["example_twr.prf"]
+default_apps = ["EuroScope"]
