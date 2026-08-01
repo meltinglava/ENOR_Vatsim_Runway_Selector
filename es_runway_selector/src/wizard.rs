@@ -171,7 +171,6 @@ mod tests {
 name = "{name}"
 version = "0.1.0"
 display_name = "{name}"
-runtime = "rust"
 entry = "x"
 "#
             ),

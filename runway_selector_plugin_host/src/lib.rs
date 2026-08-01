@@ -1,10 +1,12 @@
 //! Plugin lifecycle: spawn an area's subprocess, wait for it to come up,
 //! talk to it over HTTP/JSON, shut it down.
 //!
-//! Each area ships a `manifest.toml` declaring a [`Runtime`] and an `entry`
-//! path. For Rust areas we exec the entry directly; for Python / Node / Deno
-//! we delegate to [`mise`](https://mise.jdx.dev/) so end users do not have to
-//! install language runtimes manually.
+//! Each area ships a `manifest.toml` declaring an `entry` path. If the area
+//! also ships a `mise.toml`, the entry is a script and we delegate to
+//! [`mise`](https://mise.jdx.dev/) with the interpreter that file pins
+//! (Python / Node / Deno) so end users do not have to install language
+//! runtimes manually. Without a `mise.toml` the entry is treated as a native
+//! executable and exec'd directly.
 //!
 //! Once the child is alive, we poll `GET /health` until it returns `200` and
 //! then hand back a [`PluginHandle`]. The handle owns the child: dropping it
@@ -25,7 +27,7 @@ use std::{
 use std::io;
 
 use runway_plugin_api::{RunwaySelectionsRequest, RunwaySelectionsResponse};
-use runway_selector_area_config::{AreaManifest, Runtime};
+use runway_selector_area_config::AreaManifest;
 use semver::Version;
 use thiserror::Error;
 use tokio::{
@@ -51,8 +53,14 @@ pub enum PluginError {
     Io(#[from] io::Error),
     #[error("Failed to bind a free local port: {0}")]
     Bind(String),
-    #[error("`mise` is required for runtime {runtime:?} but was not found on PATH")]
-    MiseMissing { runtime: Runtime },
+    #[error("Area ships a mise.toml but `mise` was not found on PATH")]
+    MiseMissing,
+    #[error("Failed to read mise.toml at {path}: {message}")]
+    MiseConfig { path: PathBuf, message: String },
+    #[error(
+        "mise.toml at {path} pins no supported interpreter (need one of python, node, deno in [tools])"
+    )]
+    NoSupportedInterpreter { path: PathBuf },
     #[error("Plugin entry point does not exist: {0}")]
     EntryMissing(PathBuf),
     #[error("HTTP request to plugin failed: {0}")]
@@ -231,6 +239,67 @@ fn send_graceful_terminate(_child: &Child) {
     // `shutdown`) is the graceful path and the hard kill is the fallback.
 }
 
+/// Interpreters the host knows how to launch through `mise`. Derived from
+/// the `[tools]` table of the area's `mise.toml`, never declared in the
+/// manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interpreter {
+    Python,
+    Node,
+    Deno,
+}
+
+impl Interpreter {
+    fn command(self) -> &'static str {
+        match self {
+            Interpreter::Python => "python",
+            Interpreter::Node => "node",
+            Interpreter::Deno => "deno",
+        }
+    }
+}
+
+/// How an area's entry point is launched: exec'd directly (no `mise.toml`),
+/// or through `mise` with the interpreter the area's `mise.toml` pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    Native,
+    Mise(Interpreter),
+}
+
+/// Decide how to launch an area's entry point. No `mise.toml` in `area_dir`
+/// means the entry is a native executable; with one present, the first
+/// supported interpreter in its `[tools]` table is used.
+pub fn detect_launch(area_dir: &Path) -> PluginResult<Launch> {
+    let mise_toml = area_dir.join("mise.toml");
+    if !mise_toml.exists() {
+        return Ok(Launch::Native);
+    }
+
+    let raw = std::fs::read_to_string(&mise_toml).map_err(|e| PluginError::MiseConfig {
+        path: mise_toml.clone(),
+        message: e.to_string(),
+    })?;
+    let value: toml::Value = toml::from_str(&raw).map_err(|e| PluginError::MiseConfig {
+        path: mise_toml.clone(),
+        message: e.to_string(),
+    })?;
+
+    let interpreter = value
+        .get("tools")
+        .and_then(toml::Value::as_table)
+        .and_then(|tools| {
+            tools.keys().find_map(|tool| match tool.as_str() {
+                "python" => Some(Interpreter::Python),
+                "node" => Some(Interpreter::Node),
+                "deno" => Some(Interpreter::Deno),
+                _ => None,
+            })
+        })
+        .ok_or(PluginError::NoSupportedInterpreter { path: mise_toml })?;
+    Ok(Launch::Mise(interpreter))
+}
+
 /// Build (but do not yet spawn) the command that runs a plugin's entry
 /// point. Splits out for unit testing — see [`spawn_plugin`] for the full
 /// spawn + handshake.
@@ -246,26 +315,21 @@ pub fn build_command(
         return Err(PluginError::EntryMissing(entry));
     }
 
-    let mut cmd = match manifest.runtime {
-        Runtime::Rust => tokio::process::Command::new(&entry),
-        Runtime::Python | Runtime::Node | Runtime::Deno => {
-            let mise = which::which("mise").map_err(|_| PluginError::MiseMissing {
-                runtime: manifest.runtime,
-            })?;
-            let interpreter = match manifest.runtime {
-                Runtime::Python => "python",
-                Runtime::Node => "node",
-                Runtime::Deno => "deno",
-                Runtime::Rust => unreachable!(),
-            };
+    let mut cmd = match detect_launch(area_dir)? {
+        Launch::Native => tokio::process::Command::new(&entry),
+        Launch::Mise(interpreter) => {
+            let mise = which::which("mise").map_err(|_| PluginError::MiseMissing)?;
+            let tool = interpreter.command();
             let mut c = tokio::process::Command::new(mise);
-            // `mise exec <runtime> -- <interpreter> <entry>`
-            c.args(["exec", interpreter, "--", interpreter]);
+            // `mise exec <tool> -- <interpreter> <entry>`; the tool version
+            // comes from the area's mise.toml since we run with the area dir
+            // as cwd.
+            c.args(["exec", tool, "--", tool]);
             // Deno requires explicit permission grants; without them, a script
             // launched non-interactively just fails when it tries to open a
             // socket. Areas run sandboxed under the host already (separate
             // subprocess, ephemeral lifetime), so grant the lot.
-            if matches!(manifest.runtime, Runtime::Deno) {
+            if matches!(interpreter, Interpreter::Deno) {
                 c.arg("run").arg("-A");
             }
             c.arg(&entry);
@@ -516,15 +580,13 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn dummy_manifest(name: &str, runtime: Runtime, entry: &str) -> AreaManifest {
+    fn dummy_manifest(name: &str, entry: &str) -> AreaManifest {
         AreaManifest {
             name: name.into(),
             version: Version::new(0, 1, 0),
             display_name: name.into(),
             description: None,
-            runtime,
             entry: entry.into(),
-            supported_icaos: vec![],
             min_core_version: None,
         }
     }
@@ -537,6 +599,10 @@ mod tests {
         entry_path
     }
 
+    fn write_mise_toml(dir: &Path, tool: &str) {
+        fs::write(dir.join("mise.toml"), format!("[tools]\n{tool} = \"1\"\n")).unwrap();
+    }
+
     #[test]
     fn pick_free_port_returns_nonzero() {
         let p = pick_free_port().unwrap();
@@ -544,10 +610,10 @@ mod tests {
     }
 
     #[test]
-    fn build_command_for_rust_invokes_entry_directly() {
+    fn build_command_without_mise_toml_invokes_entry_directly() {
         let dir = tempdir().unwrap();
         let entry_path = write_entry(dir.path(), "area_enor");
-        let manifest = dummy_manifest("enor", Runtime::Rust, "area_enor");
+        let manifest = dummy_manifest("enor", "area_enor");
 
         let cmd = build_command(&manifest, dir.path(), 50_000).unwrap();
         let std_cmd: &std::process::Command = cmd.as_std();
@@ -558,7 +624,7 @@ mod tests {
     #[test]
     fn build_command_fails_when_entry_missing() {
         let dir = tempdir().unwrap();
-        let manifest = dummy_manifest("enor", Runtime::Rust, "does_not_exist");
+        let manifest = dummy_manifest("enor", "does_not_exist");
         let err = build_command(&manifest, dir.path(), 50_000).unwrap_err();
         assert!(matches!(err, PluginError::EntryMissing(_)));
     }
@@ -569,10 +635,42 @@ mod tests {
         let spaced = dir.path().join("area with spaces");
         fs::create_dir_all(&spaced).unwrap();
         let entry_path = write_entry(&spaced, "my area binary");
-        let manifest = dummy_manifest("spaced", Runtime::Rust, "my area binary");
+        let manifest = dummy_manifest("spaced", "my area binary");
 
         let cmd = build_command(&manifest, &spaced, 50_000).unwrap();
         assert_eq!(cmd.as_std().get_program(), entry_path.as_os_str());
+    }
+
+    #[test]
+    fn detect_launch_is_native_without_mise_toml() {
+        let dir = tempdir().unwrap();
+        assert_eq!(detect_launch(dir.path()).unwrap(), Launch::Native);
+    }
+
+    #[test]
+    fn detect_launch_picks_interpreter_from_mise_tools() {
+        let dir = tempdir().unwrap();
+        write_mise_toml(dir.path(), "python");
+        assert_eq!(
+            detect_launch(dir.path()).unwrap(),
+            Launch::Mise(Interpreter::Python)
+        );
+    }
+
+    #[test]
+    fn detect_launch_errors_when_no_supported_interpreter_pinned() {
+        let dir = tempdir().unwrap();
+        write_mise_toml(dir.path(), "terraform");
+        let err = detect_launch(dir.path()).unwrap_err();
+        assert!(matches!(err, PluginError::NoSupportedInterpreter { .. }));
+    }
+
+    #[test]
+    fn detect_launch_errors_on_unparsable_mise_toml() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("mise.toml"), "not [valid toml").unwrap();
+        let err = detect_launch(dir.path()).unwrap_err();
+        assert!(matches!(err, PluginError::MiseConfig { .. }));
     }
 
     #[test]
@@ -584,7 +682,8 @@ mod tests {
         }
         let dir = tempdir().unwrap();
         write_entry(dir.path(), "server.py");
-        let manifest = dummy_manifest("py_area", Runtime::Python, "server.py");
+        write_mise_toml(dir.path(), "python");
+        let manifest = dummy_manifest("py_area", "server.py");
 
         let cmd = build_command(&manifest, dir.path(), 50_000).unwrap();
         let std_cmd: &std::process::Command = cmd.as_std();
@@ -608,7 +707,8 @@ mod tests {
         }
         let dir = tempdir().unwrap();
         write_entry(dir.path(), "server.ts");
-        let manifest = dummy_manifest("deno_area", Runtime::Deno, "server.ts");
+        write_mise_toml(dir.path(), "deno");
+        let manifest = dummy_manifest("deno_area", "server.ts");
 
         let cmd = build_command(&manifest, dir.path(), 50_000).unwrap();
         let args: Vec<String> = cmd
@@ -630,33 +730,29 @@ mod tests {
         }
         let dir = tempdir().unwrap();
         write_entry(dir.path(), "server.py");
-        let manifest = dummy_manifest("py_area", Runtime::Python, "server.py");
+        write_mise_toml(dir.path(), "python");
+        let manifest = dummy_manifest("py_area", "server.py");
 
         let err = build_command(&manifest, dir.path(), 50_000).unwrap_err();
-        assert!(matches!(
-            err,
-            PluginError::MiseMissing {
-                runtime: Runtime::Python
-            }
-        ));
+        assert!(matches!(err, PluginError::MiseMissing));
     }
 
     #[test]
     fn host_compatibility_passes_when_no_minimum_declared() {
-        let manifest = dummy_manifest("x", Runtime::Rust, "x");
+        let manifest = dummy_manifest("x", "x");
         check_host_compatibility(&manifest, &Version::new(0, 0, 1)).unwrap();
     }
 
     #[test]
     fn host_compatibility_passes_when_current_satisfies_minimum() {
-        let mut manifest = dummy_manifest("x", Runtime::Rust, "x");
+        let mut manifest = dummy_manifest("x", "x");
         manifest.min_core_version = Some(Version::new(1, 0, 0));
         check_host_compatibility(&manifest, &Version::new(1, 2, 3)).unwrap();
     }
 
     #[test]
     fn host_compatibility_fails_when_current_too_old() {
-        let mut manifest = dummy_manifest("x", Runtime::Rust, "x");
+        let mut manifest = dummy_manifest("x", "x");
         manifest.min_core_version = Some(Version::new(2, 0, 0));
         let err = check_host_compatibility(&manifest, &Version::new(1, 9, 9)).unwrap_err();
         assert!(matches!(err, PluginError::IncompatibleHostVersion { .. }));

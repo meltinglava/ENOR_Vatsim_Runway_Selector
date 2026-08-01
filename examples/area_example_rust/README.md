@@ -8,7 +8,7 @@ A 100-line Rust area plugin. Use as a starting template.
 Cargo.toml
 src/main.rs               # the HTTP/JSON plugin server
 package/
-    manifest.toml         # runtime = "rust", entry = "area_example_rust"
+    manifest.toml         # entry = "area_example_rust" (no mise.toml → native binary)
     area.toml
     profiles/twr.toml
 ```

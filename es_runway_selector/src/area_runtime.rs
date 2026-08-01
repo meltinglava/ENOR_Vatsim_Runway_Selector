@@ -73,7 +73,6 @@ pub fn match_area_for_prefix<'a>(
 mod tests {
     use super::*;
     use indexmap::IndexMap;
-    use runway_selector_area_config::Runtime;
     use semver::Version;
 
     fn fake_area(name: &str, sct_prefix: &str) -> InstalledArea {
@@ -84,9 +83,7 @@ mod tests {
                 version: Version::new(0, 1, 0),
                 display_name: name.into(),
                 description: None,
-                runtime: Runtime::Rust,
                 entry: name.into(),
-                supported_icaos: vec![],
                 min_core_version: None,
             },
             config: AreaConfig {

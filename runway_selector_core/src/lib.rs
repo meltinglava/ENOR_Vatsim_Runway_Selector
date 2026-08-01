@@ -46,6 +46,6 @@ pub use runway::{Runway, RunwayDirection, RunwayUse};
 /// `runway_selector_area_config` directly.
 pub use runway_selector_area_config as area_config;
 pub use runway_selector_area_config::{
-    AreaConfig, AreaManifest, ProfileConfig, Runtime, TopLevelConfig, load_area_config,
-    load_area_manifest, load_profile_config, merge_local_overrides,
+    AreaConfig, AreaManifest, ProfileConfig, TopLevelConfig, load_area_config, load_area_manifest,
+    load_profile_config, merge_local_overrides,
 };

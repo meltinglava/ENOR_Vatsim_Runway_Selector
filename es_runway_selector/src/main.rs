@@ -148,9 +148,9 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
         installed_areas,
     } = prepared;
 
-    // Host-side configuration (METAR feeds, ignore list, defaults) comes from
-    // the area whose sector_file_prefix owns this sector file. Runway
-    // *selection* below runs through every installed area plugin.
+    // Everything area-specific — METAR feeds, ignore list, defaults, and the
+    // runway-selection plugin itself — comes from the area whose
+    // sector_file_prefix owns this sector file.
     let active_area =
         area_runtime::match_area_for_prefix(&installed_areas, config.get_sector_file_prefix());
     if active_area.is_none() {
@@ -198,14 +198,15 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
         warn!(error = ?e, "ATIS fetch failed; continuing without ATIS-derived selections");
     }
 
-    // Hand selection off to the installed area plugins. ATIS-derived runways
-    // are already applied host-side; plugins only see the remaining airports.
-    // Failures degrade to defaults and are surfaced to the user.
-    let statuses = plugin_runner::run_area_selections(&mut airports, &installed_areas).await;
-    for status in &statuses {
-        if matches!(status.outcome, plugin_runner::AreaRunOutcome::Failed(_)) {
-            eprintln!("WARNING: {}", status.user_message());
-        }
+    // Hand selection off to the active area's plugin — it owns every airport
+    // the sector file produced. ATIS-derived runways are already applied
+    // host-side; the plugin only sees the remaining airports. Failures
+    // degrade to defaults and are surfaced to the user.
+    let status = plugin_runner::run_area_selections(&mut airports, active_area).await;
+    if let Some(status) = &status
+        && matches!(status.outcome, plugin_runner::AreaRunOutcome::Failed(_))
+    {
+        eprintln!("WARNING: {}", status.user_message());
     }
 
     airports.apply_default_runways(default_runways);

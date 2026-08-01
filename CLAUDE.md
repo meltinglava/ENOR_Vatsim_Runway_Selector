@@ -12,15 +12,19 @@ Originally hardcoded for the Polaris area (Norway/ENOR). Per-FIR selection logic
 
 Nine crates in a Cargo workspace (`resolver = "3"`, edition 2024), plus example plugins under `examples/`:
 
+### Releases
+
+The project is relesed with cargo-release. At this time the application is not released, and breaking changes can be made without taking any backwards compatibllity considerations.
+
 ### Host
 
-- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. `plugin_runner` spawns every installed area's subprocess (disjoint ICAO ownership from each `manifest.toml supported_icaos` — the single authoritative airport list), sends one batch `POST /runway-selections`, and merges the results back onto `Airports::runways_in_use`. ATIS is applied host-side; airports already decided by ATIS are not sent to plugins. Plugin failures are logged, surfaced to the user, and degrade to defaults.
+- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. `plugin_runner` spawns the active area's subprocess (the area whose `sector_file_prefix` matches the open sector file owns every airport that file produced, minus `area.toml`'s `ignore_airports`), sends one batch `POST /runway-selections`, and merges the results back onto `Airports::runways_in_use`. ATIS is applied host-side; airports already decided by ATIS are not sent to plugins. Plugin failures are logged, surfaced to the user, and degrade to defaults.
 
 ### Core libraries
 
 - **`runway_selector_core/`** — Area-agnostic selection types and logic. Owns sector file decoding, METAR fetching, ATIS regex parsing, runway wind component math, the runway-source priority model, the host-side converter (`plugin_convert`) that lowers parsed METARs and pre-computed wind components into the HTTP/JSON plugin contract, the `.rwy` writer, and the HTML runway report (including plugin `SelectionTag` rendering). Area-specific runway-selection rules no longer live here.
 - **`runway_plugin_api/`** — The single contract crate: serde wire types for `POST /runway-selections` (request-level UTC `timestamp_utc` + `area_timezone`, pre-computed per-runway wind, parsed METAR, per-airport `handled` opt-out flag, `SelectionTag`s) plus tested high-level selection helpers (`helpers::best_headwind`, `prefer_unless_tailwind`, `prefer_unless_crosswind`, `min_crosswind`, `within_crosswind_limit`). The OpenAPI spec is generated code-first from these types (`cargo run -p runway_plugin_api --features openapi --bin generate_openapi > openapi.json`) so it cannot drift; the committed copy lives at the workspace root.
-- **`runway_selector_plugin_host/`** — Lifecycle for the subprocess plugins. `build_command` constructs the right `tokio::process::Command` (Rust runtimes exec the entry directly; Python/Node/Deno route through `mise exec`). `spawn_plugin` reserves a free localhost port, spawns the child, and polls `GET /health` until 200; `PluginHandle::select_runways` posts the batch request with an HTTP-status check, and `PluginHandle::shutdown` escalates `POST /shutdown` → SIGTERM (Unix) → kill, which makes graceful shutdown work on Windows too. Startup failures capture a stderr tail.
+- **`runway_selector_plugin_host/`** — Lifecycle for the subprocess plugins. `build_command` constructs the right `tokio::process::Command`: an area shipping a `mise.toml` has its entry routed through `mise exec` with the interpreter pinned in that file's `[tools]` table (python/node/deno); otherwise the entry is exec'd as a native binary. `spawn_plugin` reserves a free localhost port, spawns the child, and polls `GET /health` until 200; `PluginHandle::select_runways` posts the batch request with an HTTP-status check, and `PluginHandle::shutdown` escalates `POST /shutdown` → SIGTERM (Unix) → kill, which makes graceful shutdown work on Windows too. Startup failures capture a stderr tail.
 - **`runway_selector_areas/`** — Area registry, install, and removal. Fetches the registry JSON, downloads area tarballs, verifies SHA-256, and extracts to `<install_dir>/<name>/`. `list_installed_areas` enumerates `manifest.toml`s on disk.
 
 ### Area plugins
@@ -78,7 +82,8 @@ An area package is a directory with this layout:
 
 ```text
 <install_dir>/<name>/
-    manifest.toml          # immutable area identity (name, version, runtime, entry)
+    manifest.toml          # immutable area identity (name, version, entry)
+    mise.toml              # optional; present = entry is a script run via mise ([tools] pins python/node/deno)
     area.toml              # runtime defaults: METAR URLs, ignore ICAOs, default runways, IANA tz
     area.local.toml        # user sparse overrides (preserved across area updates)
     plugin/<entry>         # the binary/script spawned as the HTTP/JSON subprocess
@@ -101,7 +106,7 @@ The user-facing rule: **anything ending in `.local.toml` belongs to you and surv
 4. Parse the `.sct` `[RUNWAY]` section (UTF-8, then ISO-8859-1 fallback) into `Airport` + `Runway` records.
 5. Fetch METARs from the configured URLs (`https://metar.vatsim.net/EN` + `/ESKS` currently hardcoded; moves to `area.toml`) and parse via `metar_decoder`.
 6. Fetch VATSIM v3 data and parse `text_atis` per relevant ICAO via `runway_selector_core::atis::find_runway_in_use_from_atis` — a regex stack that recognizes `RUNWAY XX IN USE`, `APPROACH RUNWAY XX`, `DEPARTURE RUNWAY XX`, `RUNWAYS XX AND YY IN USE`, and the split `ARRIVAL/DEPARTURE INFORMATION` bulletin form.
-7. `plugin_runner::run_area_selections` runs every installed area: ownership is assigned from each `manifest.toml supported_icaos` (first claim wins), airports already decided by ATIS are excluded, the plugin is spawned via `runway_selector_plugin_host::spawn_plugin`, one batch `POST /runway-selections` (with request-level `timestamp_utc` + `area_timezone`) is sent, and `handled: true` results are written into `Airports::runways_in_use` under the source the plugin attributes (METAR / DEFAULT) with the response `tags` stored on the airport for the report. If no area is installed (or a plugin errors), the host logs, surfaces a warning, and continues with defaults only.
+7. `plugin_runner::run_area_selections` runs the active area (matched by `sector_file_prefix`): it owns every airport loaded from the sector file (`ignore_airports` already excluded at load), airports already decided by ATIS are excluded, the plugin is spawned via `runway_selector_plugin_host::spawn_plugin`, one batch `POST /runway-selections` (with request-level `timestamp_utc` + `area_timezone`) is sent, and `handled: true` results are written into `Airports::runways_in_use` under the source the plugin attributes (METAR / DEFAULT) with the response `tags` stored on the airport for the report. If no area is installed (or the plugin errors), the host logs, surfaces a warning, and continues with defaults only.
 8. `Airports::apply_default_runways` fills the `Default` source from the area's `default_runways` for airports still without any selection.
 9. Spawn EuroScope launchers (`prf` paths joined onto the sector-file folder; the first instance launches immediately, subsequent ones wait `es_main_window_delay_ms`, default 2000 ms, so the first window becomes the main one).
 10. Write the `.rwy` file and open a temp HTML runway report (`make_runway_report_html`, askama template `runway_selector_core/templates/runway_report.html`) via `open::that_detached`.

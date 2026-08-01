@@ -97,11 +97,11 @@ ENZV = 36
 
 Where the files live:
 
-|         | Config (`config.toml`, `app_launchers.toml`)           | Areas (`<area>/area.toml`, profiles)               |
-| ------- | ------------------------------------------------------ | -------------------------------------------------- |
-| Windows | `%APPDATA%\meltinglava\es_runway_selector\config`      | `%APPDATA%\meltinglava\es_runway_selector\data\areas` |
-| Linux   | `~/.config/es_runway_selector`                         | `~/.local/share/es_runway_selector/areas`           |
-| macOS   | `~/Library/Application Support/meltinglava.es_runway_selector` | same, under `areas/`                       |
+|         | Config (`config.toml`, `app_launchers.toml`)                   | Areas (`<area>/area.toml`, profiles)                  |
+|---------|----------------------------------------------------------------|-------------------------------------------------------|
+| Windows | `%APPDATA%\meltinglava\es_runway_selector\config`              | `%APPDATA%\meltinglava\es_runway_selector\data\areas` |
+| Linux   | `~/.config/es_runway_selector`                                 | `~/.local/share/es_runway_selector/areas`             |
+| macOS   | `~/Library/Application Support/meltinglava.es_runway_selector` | same, under `areas/`                                  |
 
 Tables merge key-by-key; scalars and arrays are replaced wholesale.
 
@@ -142,8 +142,6 @@ es_runway_selector` adds verbose stdout output.
 
 ## Build from source
 
-Rust 1.85+ (edition 2024):
-
 ```bash
 git clone https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector
 cd ENOR_Vatsim_Runway_Selector
@@ -164,7 +162,7 @@ To add a new FIR — or fork an existing area for your group — see
 ## Issues
 
 [GitHub issues](https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector/issues).
-Check existing reports before filing.
+Check existing reports before reporting a new issue.
 
 ---
 

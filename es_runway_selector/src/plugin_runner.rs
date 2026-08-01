@@ -1,19 +1,20 @@
-//! Drive area plugins over HTTP/JSON.
+//! Drive the active area's plugin over HTTP/JSON.
 //!
-//! Multi-plugin: every installed area whose `manifest.toml supported_icaos`
-//! (the single authoritative airport list) intersects the sector file gets
-//! spawned via [`runway_selector_plugin_host`], receives one batch
-//! `POST /runway-selections`, and has its selections written back onto
-//! [`Airports`]. Ownership is disjoint — the first installed area to claim an
-//! ICAO owns it and later claims are dropped with a warning.
+//! The area that owns the run is the one whose `sector_file_prefix` matches
+//! the sector file the user opened. It owns every airport found in that
+//! sector file — `area.toml`'s `ignore_airports` was already applied when
+//! the sector file was loaded, so there is no separate airport list to
+//! maintain. The plugin is spawned via [`runway_selector_plugin_host`],
+//! receives one batch `POST /runway-selections`, and has its selections
+//! written back onto [`Airports`].
 //!
 //! ATIS is applied by the host before this runs; airports that already have
-//! an ATIS selection are *not* sent to plugins (no pointless round-trip, no
-//! double handling).
+//! an ATIS selection are *not* sent to the plugin (no pointless round-trip,
+//! no double handling).
 //!
 //! A missing, crashed, or erroring plugin never breaks the run: the failure
 //! is logged, reported in the returned [`AreaRunStatus`], and the host falls
-//! back to built-in defaults for that area's airports.
+//! back to built-in defaults for the area's airports.
 
 use std::collections::HashSet;
 
@@ -72,74 +73,44 @@ impl AreaRunStatus {
     }
 }
 
-/// Run runway selection through every installed area plugin.
+/// Run runway selection through the active area's plugin. `None` when no
+/// installed area matched the sector file — nothing to run.
 ///
-/// Returns one status per area so the caller can surface plugin failures to
-/// the user. Never returns an error: plugin problems degrade to defaults.
+/// Never returns an error: plugin problems degrade to defaults.
 pub async fn run_area_selections(
     airports: &mut Airports,
-    areas: &[InstalledArea],
-) -> Vec<AreaRunStatus> {
+    active_area: Option<&InstalledArea>,
+) -> Option<AreaRunStatus> {
+    let area = active_area?;
     let now_utc = Timestamp::now();
-    let ownership = assign_airport_ownership(areas);
-
-    let mut statuses = Vec::with_capacity(areas.len());
-    for area in areas {
-        let status = run_single_area(airports, area, &ownership, now_utc).await;
-        info!("{}", status.user_message());
-        statuses.push(status);
-    }
-    statuses
+    let status = run_single_area(airports, area, now_utc).await;
+    info!("{}", status.user_message());
+    Some(status)
 }
 
-/// Disjoint ICAO ownership across areas: first installed area to claim an
-/// ICAO in its manifest wins; duplicate claims are logged and dropped.
-fn assign_airport_ownership(areas: &[InstalledArea]) -> IndexMap<String, String> {
-    let mut owner_by_icao: IndexMap<String, String> = IndexMap::new();
-    for area in areas {
-        for icao in &area.manifest.supported_icaos {
-            match owner_by_icao.entry(icao.clone()) {
-                indexmap::map::Entry::Vacant(v) => {
-                    v.insert(area.manifest.name.clone());
-                }
-                indexmap::map::Entry::Occupied(o) => {
-                    warn!(
-                        icao = %icao,
-                        owner = %o.get(),
-                        also_claimed_by = %area.manifest.name,
-                        "Multiple areas claim the same airport; keeping the first owner"
-                    );
-                }
-            }
-        }
-    }
-    owner_by_icao
+/// Airports the plugin should decide: everything the sector file produced
+/// (the ignore list was applied at load time) that ATIS has not already
+/// decided — the host applies ATIS itself.
+fn eligible_icaos(airports: &Airports) -> Vec<String> {
+    airports
+        .airports
+        .iter()
+        .filter(|(_, airport)| {
+            !airport
+                .runways_in_use
+                .contains_key(&RunwayInUseSource::Atis)
+        })
+        .map(|(icao, _)| icao.clone())
+        .collect()
 }
 
 async fn run_single_area(
     airports: &mut Airports,
     area: &InstalledArea,
-    ownership: &IndexMap<String, String>,
     now_utc: Timestamp,
 ) -> AreaRunStatus {
     let name = area.manifest.name.clone();
-
-    // Airports this area owns, present in the sector file, and not already
-    // decided by ATIS (the host applies ATIS itself — F6).
-    let eligible: Vec<String> = area
-        .manifest
-        .supported_icaos
-        .iter()
-        .filter(|icao| ownership.get(*icao) == Some(&name))
-        .filter(|icao| {
-            airports.airports.get(*icao).is_some_and(|airport| {
-                !airport
-                    .runways_in_use
-                    .contains_key(&RunwayInUseSource::Atis)
-            })
-        })
-        .cloned()
-        .collect();
+    let eligible = eligible_icaos(airports);
 
     if eligible.is_empty() {
         return AreaRunStatus {
@@ -266,36 +237,31 @@ fn format_rfc3339_utc(ts: Timestamp) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runway_selector_area_config::{AreaConfig, AreaManifest, Runtime};
-    use std::path::PathBuf;
+    use runway_selector_core::airport::Airport;
 
-    fn area(name: &str, icaos: &[&str]) -> InstalledArea {
-        InstalledArea {
-            area_dir: PathBuf::from("/nonexistent").join(name),
-            manifest: AreaManifest {
-                name: name.into(),
-                version: Version::new(0, 1, 0),
-                display_name: name.into(),
-                description: None,
-                runtime: Runtime::Rust,
-                entry: name.into(),
-                supported_icaos: icaos.iter().map(|s| s.to_string()).collect(),
-                min_core_version: None,
-            },
-            config: AreaConfig::default(),
+    fn airport(icao: &str) -> Airport {
+        Airport {
+            icao: icao.into(),
+            metar: None,
+            runways: vec![],
+            runways_in_use: IndexMap::new(),
+            selection_tags: vec![],
         }
     }
 
     #[test]
-    fn ownership_is_first_claim_wins() {
-        let areas = vec![
-            area("enor", &["ENGM", "ENZV"]),
-            area("esos", &["ENGM", "ESSA"]),
-        ];
-        let ownership = assign_airport_ownership(&areas);
-        assert_eq!(ownership.get("ENGM").map(String::as_str), Some("enor"));
-        assert_eq!(ownership.get("ESSA").map(String::as_str), Some("esos"));
-        assert_eq!(ownership.get("ENZV").map(String::as_str), Some("enor"));
+    fn eligible_skips_atis_decided_airports() {
+        let mut airports = Airports::new();
+        airports
+            .airports
+            .insert("ENGM".to_string(), airport("ENGM"));
+        let mut atis_decided = airport("ENBR");
+        atis_decided
+            .runways_in_use
+            .insert(RunwayInUseSource::Atis, IndexMap::new());
+        airports.airports.insert("ENBR".to_string(), atis_decided);
+
+        assert_eq!(eligible_icaos(&airports), vec!["ENGM".to_string()]);
     }
 
     #[test]

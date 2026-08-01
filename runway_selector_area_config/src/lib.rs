@@ -58,28 +58,16 @@ pub struct AreaManifest {
     pub display_name: String,
     #[serde(default)]
     pub description: Option<String>,
-    pub runtime: Runtime,
     /// Entry path relative to the area's `plugin/` directory. Spawned as a
-    /// subprocess that serves the HTTP/JSON plugin contract.
+    /// subprocess that serves the HTTP/JSON plugin contract. Run natively,
+    /// unless the area ships a `mise.toml` — then the host routes the entry
+    /// through [`mise`](https://mise.jdx.dev/) using the interpreter that
+    /// file pins.
     pub entry: String,
-    /// The airports this area owns — the single authoritative list. The host
-    /// only sends the plugin airports from this list, and the first installed
-    /// area to claim an ICAO wins when two areas overlap.
-    #[serde(default)]
-    pub supported_icaos: Vec<String>,
     /// Minimum host (`runway_selector_core`) semver required. Hosts older
     /// than this refuse to spawn the plugin.
     #[serde(default)]
     pub min_core_version: Option<Version>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Runtime {
-    Rust,
-    Python,
-    Node,
-    Deno,
 }
 
 /// Area-level runtime configuration. Ships in `area.toml`; users override
@@ -382,6 +370,28 @@ ENZV = 36
 name = "enor"
 version = "0.1.0"
 display_name = "Polaris / ENOR"
+entry = "area_enor"
+"#,
+        )
+        .unwrap();
+
+        let manifest = load_area_manifest(dir.path()).unwrap();
+        assert_eq!(manifest.name, "enor");
+        assert_eq!(manifest.entry, "area_enor");
+        assert_eq!(manifest.version, Version::new(0, 1, 0));
+    }
+
+    #[test]
+    fn load_area_manifest_ignores_retired_fields() {
+        // Areas installed before `runtime`/`supported_icaos` were removed
+        // still have them on disk; they must parse, not error.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("manifest.toml"),
+            r#"
+name = "enor"
+version = "0.1.0"
+display_name = "Polaris / ENOR"
 runtime = "rust"
 entry = "area_enor"
 supported_icaos = ["ENGM", "ENZV"]
@@ -391,7 +401,5 @@ supported_icaos = ["ENGM", "ENZV"]
 
         let manifest = load_area_manifest(dir.path()).unwrap();
         assert_eq!(manifest.name, "enor");
-        assert_eq!(manifest.runtime, Runtime::Rust);
-        assert_eq!(manifest.version, Version::new(0, 1, 0));
     }
 }

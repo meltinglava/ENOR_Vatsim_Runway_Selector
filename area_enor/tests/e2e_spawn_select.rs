@@ -13,7 +13,7 @@ use runway_plugin_api::{
     AirportSelectionRequest, CrosswindDirection, RunwayInfo, RunwaySelectionsRequest, RunwayUse,
     SelectionSource,
 };
-use runway_selector_area_config::{AreaManifest, Runtime};
+use runway_selector_area_config::AreaManifest;
 use runway_selector_plugin_host::spawn_plugin;
 use semver::Version;
 
@@ -46,9 +46,7 @@ ENZV = 18
         version: Version::new(0, 1, 0),
         display_name: "ENOR e2e".into(),
         description: None,
-        runtime: Runtime::Rust,
         entry: entry_name.to_string_lossy().into_owned(),
-        supported_icaos: vec!["ENGM".into(), "ENBR".into()],
         min_core_version: None,
     };
     // The host normally reads manifest.toml from disk; write it too so the

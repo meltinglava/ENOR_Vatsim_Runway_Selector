@@ -39,18 +39,16 @@ The package's identity. Never overridden by users.
 name            = "my-area"
 version         = "0.1.0"
 display_name    = "My Area"
-runtime         = "rust"           # rust | python | node | deno
 entry           = "area_my_area"   # path relative to plugin/
-supported_icaos = ["EXAM", "EXBM"] # the airports you own — authoritative
 ```
-
-`supported_icaos` is the **single source of truth** for which airports
-your plugin decides. The host only sends you airports from this list
-(that also exist in the open sector file), and when two installed areas
-claim the same ICAO, the first installed one wins.
 
 Optional: `description`, `min_core_version` (hosts older than this
 refuse to spawn you).
+
+The host exec's `plugin/<entry>` directly — unless you ship a
+`mise.toml` next to `manifest.toml`, in which case the entry is run
+through [mise](https://mise.jdx.dev/) with the interpreter that file
+pins (see [Non-Native runtimes](#non-native-runtimes)).
 
 ## 3. Write `area.toml`
 
@@ -63,7 +61,7 @@ sector_file_prefix = "ENOR"            # matches ENOR-*.sct
 ignore_airports    = ["ENQR"]          # ICAOs whose METARs to drop
 
 [default_runways]
-ENGM = 1                                # heading-in-tens-of-degrees fallback
+ENGM = 1
 ```
 
 All fields are optional.
@@ -176,10 +174,10 @@ crosswind-driven runway switch.
 
 ### Python / Node / Deno
 
-The host runs non-Rust entries through
+Ship a `mise.toml` pinning your runtime next to `manifest.toml`; the
+host detects it and runs your entry through
 [`mise`](https://mise.jdx.dev/), so end users don't need the runtime
-installed. Ship a `mise.toml` pinning your runtime next to
-`manifest.toml`. The Python example
+installed. The Python example
 ([`examples/area_example_python`](../examples/area_example_python))
 uses only the standard library; the Deno example
 ([`examples/area_example_deno`](../examples/area_example_deno)) is a
@@ -344,15 +342,18 @@ For any `foo.toml` you ship, an end user may write a sibling
 merge key-by-key, scalars and arrays are replaced wholesale. **Never
 ship a `.local.toml` yourself**; it would clobber the user's overrides.
 
-### Non-Rust runtimes
+### Non-Native runtimes
 
-Pin the runtime version at your area's root so the host can install
-it on demand:
+[mise](https://mise.jdx.dev/) is available on all target systems.
+Shipping a `mise.toml` next to `manifest.toml` is what tells the host
+your entry is a script rather than a native binary: it runs the entry
+through mise with the first supported interpreter (`python`, `node`,
+or `deno`) pinned in the `[tools]` table.
 
 ```toml
 # mise.toml
 [tools]
-python = "3.12"
+python = "3.14"
 ```
 
 Then serve the three endpoints with whatever HTTP server your language
@@ -360,7 +361,3 @@ ships — see
 [`examples/area_example_python/package/plugin/server.py`](../examples/area_example_python/package/plugin/server.py)
 (standard library only) and
 [`examples/area_example_deno/package/plugin/server.ts`](../examples/area_example_deno/package/plugin/server.ts).
-
-If the user doesn't have `mise` installed, the host fails the spawn
-with a pointer to <https://mise.jdx.dev/getting-started.html>. Rust
-areas don't need `mise`.

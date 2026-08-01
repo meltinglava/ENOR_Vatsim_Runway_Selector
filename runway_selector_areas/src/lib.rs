@@ -452,7 +452,6 @@ mod tests {
 name = "enor"
 version = "0.1.0"
 display_name = "Polaris / ENOR"
-runtime = "rust"
 entry = "area_enor"
 "#,
         )
