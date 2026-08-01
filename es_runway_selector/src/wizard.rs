@@ -1,17 +1,21 @@
-//! First-run wizard: prints guidance when the user starts the binary without
-//! having installed any area packages, or with an area installed but no
-//! profiles configured.
+//! First-run wizard and startup profile selection.
 //!
-//! Non-interactive — we only emit messages. Interactive prompts would need
-//! `rfd` (GUI) or a stdin reader, both of which would block CI / non-TTY
-//! users. The intent is to point the user at the right `area …` subcommand.
+//! The setup-state part prints guidance when the user starts the binary
+//! without having installed any area packages, or with an area installed but
+//! no profiles configured — it only emits messages and never blocks.
+//!
+//! [`choose_profile`] is the one interactive piece: it picks which of the
+//! active area's profiles to launch. It only opens a terminal dialog when
+//! there is a real choice to make (two or more profiles on an attended
+//! terminal); otherwise it degrades silently, so CI / non-TTY runs are safe.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use dialoguer::{FuzzySelect, console::user_attended};
 use runway_selector_area_config::{AreaManifest, ProfileConfig, load_profile_config};
 use runway_selector_areas::list_installed_areas;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Returned by [`detect_setup_state`] — what the user needs to do next.
 #[derive(Debug, PartialEq, Eq)]
@@ -86,6 +90,77 @@ pub fn profiles_in_area(area_dir: &Path) -> Vec<PathBuf> {
                     .is_some_and(|n| n.ends_with(".local.toml"))
         })
         .collect()
+}
+
+/// Decide which of the active area's profiles to launch with.
+///
+/// Zero profiles returns `None` — the host keeps its plain
+/// `app_launchers.toml` behaviour. Exactly one profile is used without ever
+/// showing a dialog. Two or more open a fuzzy-select prompt; cancelling it
+/// (or running without a terminal) also falls back to `None`.
+pub fn choose_profile(area_dir: &Path, area_display_name: &str) -> Option<ProfileConfig> {
+    let profiles: Vec<ProfileConfig> = profiles_in_area(area_dir)
+        .iter()
+        .filter_map(|path| match load_profile_config(path) {
+            Ok(profile) => Some(profile),
+            Err(e) => {
+                warn!(path = %path.display(), error = ?e, "Skipping unparsable profile");
+                None
+            }
+        })
+        .collect();
+    let chosen = pick_profile(profiles, |ps| prompt_for_profile(ps, area_display_name));
+    if let Some(profile) = &chosen {
+        info!(profile = %profile.name, "Using profile");
+    }
+    chosen
+}
+
+/// Selection rule, separated from the terminal so it is testable: the
+/// `chooser` (the dialog) is only ever invoked when there are at least two
+/// options.
+fn pick_profile(
+    profiles: Vec<ProfileConfig>,
+    chooser: impl FnOnce(&[ProfileConfig]) -> Option<usize>,
+) -> Option<ProfileConfig> {
+    match profiles.len() {
+        0 => None,
+        1 => profiles.into_iter().next(),
+        _ => {
+            let idx = chooser(&profiles)?;
+            profiles.into_iter().nth(idx)
+        }
+    }
+}
+
+fn prompt_for_profile(profiles: &[ProfileConfig], area_display_name: &str) -> Option<usize> {
+    if !user_attended() {
+        warn!(
+            "Multiple profiles available but no attended terminal; \
+             falling back to app_launchers.toml"
+        );
+        return None;
+    }
+    let items: Vec<String> = profiles
+        .iter()
+        .map(|p| format!("{} ({})", p.display_name, p.name))
+        .collect();
+    match FuzzySelect::new()
+        .with_prompt(format!("Select profile for {area_display_name}"))
+        .items(&items)
+        .default(0)
+        .interact_opt()
+    {
+        Ok(Some(idx)) => Some(idx),
+        Ok(None) => {
+            info!("Profile selection cancelled; falling back to app_launchers.toml");
+            None
+        }
+        Err(e) => {
+            warn!(error = ?e, "Profile selection failed; falling back to app_launchers.toml");
+            None
+        }
+    }
 }
 
 /// Load a profile by `(area_name, profile_name)` from `install_dir`.
@@ -239,6 +314,42 @@ entry = "x"
         let listed = profiles_in_area(&area);
         assert_eq!(listed.len(), 1);
         assert!(listed[0].ends_with("twr.toml"));
+    }
+
+    fn profile(name: &str) -> ProfileConfig {
+        ProfileConfig {
+            name: name.to_string(),
+            display_name: name.to_uppercase(),
+            prf_files: Vec::new(),
+            default_apps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pick_profile_returns_none_without_profiles() {
+        let picked = pick_profile(Vec::new(), |_| panic!("dialog must not open"));
+        assert!(picked.is_none());
+    }
+
+    #[test]
+    fn pick_profile_skips_dialog_for_single_profile() {
+        let picked = pick_profile(vec![profile("rads")], |_| panic!("dialog must not open"));
+        assert_eq!(picked.unwrap().name, "rads");
+    }
+
+    #[test]
+    fn pick_profile_uses_chooser_for_multiple_profiles() {
+        let picked = pick_profile(vec![profile("rads"), profile("twr")], |ps| {
+            assert_eq!(ps.len(), 2);
+            Some(1)
+        });
+        assert_eq!(picked.unwrap().name, "twr");
+    }
+
+    #[test]
+    fn pick_profile_cancelled_chooser_returns_none() {
+        let picked = pick_profile(vec![profile("rads"), profile("twr")], |_| None);
+        assert!(picked.is_none());
     }
 
     #[test]

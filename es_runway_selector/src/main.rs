@@ -114,18 +114,15 @@ fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
     };
     let installed_prefixes = area_runtime::installed_sector_file_prefixes(&installed_areas);
 
-    let config = Arc::new(
-        ESConfig::find_euroscope_config_folder(cli.clean_config, &installed_prefixes).ok_or_else(
-            || {
-                anyhow!(
-                    "Could not locate a EuroScope sector file (looked for prefixes: {:?}). \
-                     Install an area with `es_runway_selector area install <name>` or set \
-                     `euroscope_config_folder` in your config.toml.",
-                    installed_prefixes
-                )
-            },
-        )?,
-    );
+    let mut config = ESConfig::find_euroscope_config_folder(cli.clean_config, &installed_prefixes)
+        .ok_or_else(|| {
+            anyhow!(
+                "Could not locate a EuroScope sector file (looked for prefixes: {:?}). \
+                 Install an area with `es_runway_selector area install <name>` or set \
+                 `euroscope_config_folder` in your config.toml.",
+                installed_prefixes
+            )
+        })?;
 
     // First-run wizard: tell the user what to install if they haven't yet.
     // Always informational — never blocks the main flow.
@@ -135,6 +132,18 @@ fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
             Err(e) => warn!(error = ?e, "Setup-state detection failed"),
         }
     }
+
+    // Profile choice is interactive terminal UI, so it stays pre-runtime like
+    // the rfd folder picker. One profile is used as-is; only a real choice
+    // (two or more) opens the dialog.
+    if let Some(area) =
+        area_runtime::match_area_for_prefix(&installed_areas, config.get_sector_file_prefix())
+        && let Some(profile) = wizard::choose_profile(&area.area_dir, &area.manifest.display_name)
+    {
+        config.apply_profile(&profile);
+    }
+
+    let config = Arc::new(config);
 
     Ok(PreparedStartup {
         config,

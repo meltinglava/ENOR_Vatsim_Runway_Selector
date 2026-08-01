@@ -101,7 +101,7 @@ The user-facing rule: **anything ending in `.local.toml` belongs to you and surv
 ### Data flow (`es_runway_selector/src/main.rs`)
 
 1. `ESConfig::find_euroscope_config_folder` locates the newest `ENOR*.sct` (Euroscope config dir / Documents / a hardcoded WSL path `/mnt/c/Users/<user>/Documents/Euroscope/Euroscope_dev`), falling back to an `rfd` folder picker on non-musl builds. Loads/seeds `config.toml` and `app_launchers.toml` under `directories::ProjectDirs("", "meltinglava", "es_runway_selector")`.
-2. First-run wizard (`wizard::detect_setup_state`) — checks for installed areas and prints guidance if there are none (or one with no profiles). Non-interactive; never blocks.
+2. First-run wizard (`wizard::detect_setup_state`) — checks for installed areas and prints guidance if there are none (or one with no profiles). Non-interactive; never blocks. Then `wizard::choose_profile` picks the active area's profile: 0 profiles → plain `app_launchers.toml` behavior, exactly 1 → used with no prompt, 2+ → `dialoguer` fuzzy-select (falls back to no profile when non-TTY or cancelled). The chosen profile rewrites the launcher set via `ESConfig::apply_profile` (one EuroScope per `prf_files` entry + the `default_apps`, keeping matching `app_launchers.toml` args). Runs pre-runtime like the rfd dialog.
 3. Spawn non-Euroscope `app_launchers` (e.g. TrackAudio) in parallel with the rest.
 4. Parse the `.sct` `[RUNWAY]` section (UTF-8, then ISO-8859-1 fallback) into `Airport` + `Runway` records.
 5. Fetch METARs from the configured URLs (`https://metar.vatsim.net/EN` + `/ESKS` currently hardcoded; moves to `area.toml`) and parse via `metar_decoder`.

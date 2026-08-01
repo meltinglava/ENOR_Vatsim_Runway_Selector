@@ -23,6 +23,7 @@ repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
 
 [workspace.dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+dialoguer = { version = "0.12.0", features = ["fuzzy-select"]}
 futures = { version = "0.3.32", default-features = false }
 indexmap = { version = "2.14.0", features = ["serde"] }
 itertools = "0.14.0"

@@ -16,6 +16,7 @@ use jiff::{
     tz::TimeZone,
 };
 use regex::Regex;
+use runway_selector_area_config::ProfileConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use sysinfo::{ProcessesToUpdate, System};
@@ -109,6 +110,15 @@ impl ESConfig {
         &self.sector_file_prefix
     }
 
+    /// Narrow the launch set to what `profile` declares: one EuroScope
+    /// instance per `prf_files` entry plus the apps named in `default_apps`.
+    /// Named apps keep their `app_launchers.toml` entries (args and all) when
+    /// present; EuroScope prf entries from `app_launchers.toml` are replaced
+    /// by the profile's `prf_files`.
+    pub fn apply_profile(&mut self, profile: &ProfileConfig) {
+        self.app_launchers = launchers_for_profile(&self.app_launchers, profile);
+    }
+
     pub async fn run_apps(&self, euroscope_ready: bool) -> Vec<tokio::task::JoinHandle<()>> {
         let mut already_running = IndexMap::new();
         let mut first_euroscope_started = false;
@@ -163,6 +173,41 @@ impl ESConfig {
         }
         handles
     }
+}
+
+fn launchers_for_profile(
+    existing: &IndexSet<AppLauncher>,
+    profile: &ProfileConfig,
+) -> IndexSet<AppLauncher> {
+    let mut launchers: IndexSet<AppLauncher> = profile
+        .prf_files
+        .iter()
+        .map(|prf| AppLauncher {
+            name: "EuroScope".to_string(),
+            args: Vec::new(),
+            prf: Some(prf.clone()),
+        })
+        .collect();
+    for name in &profile.default_apps {
+        // With prf_files present the profile owns the EuroScope instances;
+        // a bare "EuroScope" in default_apps would just duplicate them.
+        if name == "EuroScope" && !profile.prf_files.is_empty() {
+            continue;
+        }
+        let mut found = false;
+        for launcher in existing.iter().filter(|l| &l.name == name) {
+            launchers.insert(launcher.clone());
+            found = true;
+        }
+        if !found {
+            launchers.insert(AppLauncher {
+                name: name.clone(),
+                args: Vec::new(),
+                prf: None,
+            });
+        }
+    }
+    launchers
 }
 
 fn is_process_running(name: &str) -> bool {
@@ -592,5 +637,73 @@ mod tests {
             prf: None,
         });
         assert_eq!(config_file, expected);
+    }
+
+    fn launcher(name: &str, args: &[&str], prf: Option<&str>) -> AppLauncher {
+        AppLauncher {
+            name: name.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            prf: prf.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn profile_replaces_prf_entries_and_filters_apps() {
+        let existing: IndexSet<_> = [
+            launcher("EuroScope", &[], Some("enor_rads.prf")),
+            launcher("EuroScope", &[], Some("enor_gnd.prf")),
+            launcher("TrackAudio", &["--minimized"], None),
+            launcher("vacs", &[], None),
+        ]
+        .into_iter()
+        .collect();
+        let profile = ProfileConfig {
+            name: "twr".to_string(),
+            display_name: "Tower / GND".to_string(),
+            prf_files: vec![PathBuf::from("enor_twr.prf")],
+            default_apps: vec!["EuroScope".to_string(), "TrackAudio".to_string()],
+        };
+
+        let result = launchers_for_profile(&existing, &profile);
+
+        let expected: IndexSet<_> = [
+            launcher("EuroScope", &[], Some("enor_twr.prf")),
+            launcher("TrackAudio", &["--minimized"], None),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn profile_app_without_launcher_entry_gets_bare_launcher() {
+        let existing = IndexSet::new();
+        let profile = ProfileConfig {
+            name: "rads".to_string(),
+            display_name: "Radar".to_string(),
+            prf_files: vec![],
+            default_apps: vec!["TrackAudio".to_string()],
+        };
+
+        let result = launchers_for_profile(&existing, &profile);
+
+        let expected: IndexSet<_> = [launcher("TrackAudio", &[], None)].into_iter().collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn profile_without_prf_files_keeps_existing_euroscope_entries() {
+        let existing: IndexSet<_> = [launcher("EuroScope", &[], Some("enor_rads.prf"))]
+            .into_iter()
+            .collect();
+        let profile = ProfileConfig {
+            name: "rads".to_string(),
+            display_name: "Radar".to_string(),
+            prf_files: vec![],
+            default_apps: vec!["EuroScope".to_string()],
+        };
+
+        let result = launchers_for_profile(&existing, &profile);
+        assert_eq!(result, existing);
     }
 }
