@@ -249,14 +249,30 @@ impl Airports {
         }
     }
 
-    fn should_split_runway_lines(airport: &Airport, runways: &IndexMap<String, RunwayUse>) -> bool {
-        runways.len() > 1 && !Self::selected_runways_are_parallel(airport, runways)
+    /// The numeric heading part of a runway identifier: `19L` → `19`,
+    /// `29` → `29`.
+    fn runway_heading_prefix(identifier: &str) -> &str {
+        let end = identifier
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(identifier.len());
+        &identifier[..end]
     }
 
-    fn format_runway_usage_for_selection(
-        airport: &Airport,
-        runways: &IndexMap<String, RunwayUse>,
-    ) -> String {
+    /// Selections stay on one report line only when every runway points the
+    /// same direction (parallels like `19L + 19R`), because only then do they
+    /// share one set of wind components. Anything else — including the two
+    /// ends of a single runway (`29` + `11 Arr`) — splits so each line can
+    /// show its own head/tailwind.
+    fn should_split_runway_lines(runways: &IndexMap<String, RunwayUse>) -> bool {
+        runways
+            .keys()
+            .map(|identifier| Self::runway_heading_prefix(identifier))
+            .unique()
+            .count()
+            > 1
+    }
+
+    fn format_runway_usage_for_selection(runways: &IndexMap<String, RunwayUse>) -> String {
         if runways.is_empty() {
             return "(no selection)".to_string();
         }
@@ -266,7 +282,7 @@ impl Airports {
             .map(|(runway, usage)| format!("{runway}{}", usage.report_suffix()))
             .collect_vec();
 
-        if Self::should_split_runway_lines(airport, runways) {
+        if Self::should_split_runway_lines(runways) {
             parts.join("\n")
         } else {
             parts.join(" + ")
@@ -309,7 +325,7 @@ impl Airports {
             );
         }
 
-        let split_lines = Self::should_split_runway_lines(airport, runways);
+        let split_lines = Self::should_split_runway_lines(runways);
         let mut values = runways
             .keys()
             .map(|runway| {
@@ -330,10 +346,12 @@ impl Airports {
             .collect_vec();
 
         if !split_lines {
-            values = values.into_iter().unique().collect_vec();
+            // One line means one direction, so all selections share the same
+            // wind; show it once.
+            values.truncate(1);
         }
 
-        let separator = if split_lines { "\n" } else { "  +  " };
+        let separator = "\n";
         let mut head_arrow = Vec::with_capacity(values.len());
         let mut head_value = Vec::with_capacity(values.len());
         let mut cross_left_arrow = Vec::with_capacity(values.len());
@@ -355,27 +373,6 @@ impl Airports {
             cross_value.join(separator),
             cross_right_arrow.join(separator),
         )
-    }
-
-    fn selected_runways_are_parallel(
-        airport: &Airport,
-        runways: &IndexMap<String, RunwayUse>,
-    ) -> bool {
-        let directions = runways
-            .keys()
-            .filter_map(|runway_identifier| {
-                Self::runway_direction_for_identifier(airport, runway_identifier)
-            })
-            .collect_vec();
-
-        if directions.len() != runways.len() {
-            return false;
-        }
-
-        directions
-            .iter()
-            .tuple_combinations()
-            .all(|(left, right)| left.degrees % 180 == right.degrees % 180)
     }
 
     fn wind_display_parts(
@@ -491,7 +488,7 @@ impl Airports {
             "(no selection)".to_string()
         } else {
             match airport {
-                Some(airport) => Self::format_runway_usage_for_selection(airport, runways),
+                Some(_) => Self::format_runway_usage_for_selection(runways),
                 None => Self::format_runway_usage(runways).unwrap_or_default(),
             }
         };
@@ -726,7 +723,6 @@ pub(crate) mod tests {
         airport.runways_in_use = runway_in_use;
 
         let runway_text = Airports::format_runway_usage_for_selection(
-            &airport,
             &airport.runways_in_use[&RunwayInUseSource::Metar],
         );
 
@@ -809,6 +805,54 @@ pub(crate) mod tests {
         assert_eq!(row.lines[1].wind_cross_left_arrow_text, "");
         assert_eq!(row.lines[1].wind_cross_value_text, "2");
         assert_eq!(row.lines[1].wind_cross_right_arrow_text, "←");
+    }
+
+    #[test]
+    fn test_reciprocal_selection_splits_and_shows_tailwind() {
+        // ENAT: one physical runway 11/29, ATIS gives 29 for all ops with 11
+        // as an arrival option. Wind 32005KT is headwind on 29, tailwind on
+        // 11 — each direction gets its own line so the tailwind is visible.
+        let mut airport =
+            make_test_airport("ENAT 011450Z 32005KT CAVOK 16/06 Q1008 RMK WIND 700FT 33005KT");
+        airport.runways_in_use = IndexMap::from([(
+            RunwayInUseSource::Atis,
+            IndexMap::from([
+                ("29".to_string(), RunwayUse::Both),
+                ("11".to_string(), RunwayUse::Arriving),
+            ]),
+        )]);
+        let airports = Airports {
+            airports: IndexMap::from([(airport.icao.clone(), airport)]),
+        };
+
+        let report_data = airports.grouped_runway_config_report_data();
+        let view = airports.build_runway_report_view(&report_data);
+        let row = &view.groups[0].airports[0];
+
+        assert_eq!(row.line_count, 2);
+        assert_eq!(row.lines[0].runway_text, "29");
+        assert_eq!(row.lines[0].wind_head_arrow_text, "↓");
+        assert_eq!(row.lines[1].runway_text, "11 Arr");
+        assert_eq!(row.lines[1].wind_head_arrow_text, "↑");
+    }
+
+    #[test]
+    fn test_parallel_same_direction_selection_stays_on_one_line() {
+        let airport = make_test_airport("ENGM 011450Z 21013KT CAVOK 19/04 Q1010 NOSIG");
+        let selection = IndexMap::from([
+            ("19L".to_string(), RunwayUse::Both),
+            ("19R".to_string(), RunwayUse::Both),
+        ]);
+
+        assert_eq!(
+            Airports::format_runway_usage_for_selection(&selection),
+            "19L + 19R"
+        );
+        let (head_arrow, head_value, _, _, _) =
+            Airports::format_wind_component_columns_for_selection(&airport, &selection);
+        assert!(!head_arrow.contains('\n'));
+        assert!(!head_value.contains('\n'));
+        assert!(!head_value.contains('+'));
     }
 
     #[test]
