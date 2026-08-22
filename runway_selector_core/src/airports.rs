@@ -12,7 +12,7 @@ use crate::{
     airport::{Airport, CrosswindDirection, RunwayInUseSource, RunwayWindComponents},
     atis::find_runway_in_use_from_atis,
     error::CoreResult,
-    metar::get_metars,
+    metar::{get_metars, parse_metar_lines},
     runway::{RunwayDirection, RunwayUse},
     sector_file::load_airports_from_sct_runway_section,
 };
@@ -103,6 +103,17 @@ impl Airports {
         Ok(())
     }
 
+    /// Same merge as [`Self::add_metars`], but parses `text` directly instead
+    /// of fetching it over the network. Used by offline/fixture runs so a
+    /// plugin author can exercise the real pipeline without a live METAR feed.
+    pub fn add_metars_from_text(&mut self, text: &str, ignore: &IndexSet<String>) {
+        for metar in parse_metar_lines(text, ignore) {
+            if let Some(airport) = self.airports.get_mut(&metar.icao) {
+                airport.metar = Some(metar);
+            }
+        }
+    }
+
     pub async fn read_atis_and_apply_runways(&mut self) -> CoreResult<()> {
         let icaos = self.identifiers();
         let v3_data = vatsim_utils::live_api::Vatsim::new()
@@ -142,6 +153,10 @@ impl Airports {
     /// selection after the area plugin (and ATIS parser) have had their turn.
     /// Called by the host after [`Self::read_atis_and_apply_runways`] and the
     /// plugin's `SelectRunways` RPC.
+    ///
+    /// The configured value is a heading prefix (`1` → `01`); every runway
+    /// direction matching it is selected, so parallel runways (`01L`/`01R`)
+    /// all become active rather than a nonexistent bare `01`.
     pub fn apply_default_runways(&mut self, default_runways: &IndexMap<String, u8>) {
         for airport in self.airports.values_mut() {
             let default_entry = airport.runways_in_use.entry(RunwayInUseSource::Default);
@@ -150,14 +165,17 @@ impl Airports {
                 indexmap::map::Entry::Vacant(v) => {
                     if let Some(runway) = default_runways.get(airport.icao.as_str()) {
                         let identifier = format!("{runway:02}");
-                        if airport.runways.iter().any(|rw| {
-                            rw.runways
-                                .iter()
-                                .any(|dir| dir.identifier[0..2] == identifier)
-                        }) {
-                            v.insert([(identifier, RunwayUse::Both)].into());
-                        } else {
+                        let matching: IndexMap<String, RunwayUse> = airport
+                            .runways
+                            .iter()
+                            .flat_map(|rw| rw.runways.iter())
+                            .filter(|dir| dir.identifier[0..2] == identifier)
+                            .map(|dir| (dir.identifier.clone(), RunwayUse::Both))
+                            .collect();
+                        if matching.is_empty() {
                             warn!(airport.icao, default_runway = %runway, "Default runway not found in airport runways");
+                        } else {
+                            v.insert(matching);
                         }
                     }
                 }
@@ -673,6 +691,32 @@ pub(crate) mod tests {
         ap.load_airports_from_sector_file(&mut reader, &ignored)
             .unwrap();
         assert_eq!(ap.airports.len(), 50);
+    }
+
+    #[test]
+    fn test_apply_default_runways_expands_prefix_to_parallel_runways() {
+        let engm = make_test_airport("ENGM 050850Z VRB01KT CAVOK 16/07 Q1006");
+        let enzv = make_test_airport("ENZV 050850Z VRB01KT CAVOK 16/07 Q1006");
+        let mut airports = Airports {
+            airports: IndexMap::from([(engm.icao.clone(), engm), (enzv.icao.clone(), enzv)]),
+        };
+        let defaults = IndexMap::from([("ENGM".to_string(), 1u8), ("ENZV".to_string(), 18u8)]);
+
+        airports.apply_default_runways(&defaults);
+
+        let engm_default = &airports.airports["ENGM"].runways_in_use[&RunwayInUseSource::Default];
+        assert_eq!(
+            engm_default,
+            &IndexMap::from([
+                ("01L".to_string(), RunwayUse::Both),
+                ("01R".to_string(), RunwayUse::Both),
+            ])
+        );
+        let enzv_default = &airports.airports["ENZV"].runways_in_use[&RunwayInUseSource::Default];
+        assert_eq!(
+            enzv_default,
+            &IndexMap::from([("18".to_string(), RunwayUse::Both)])
+        );
     }
 
     pub(crate) fn make_test_airport(metar_str: &str) -> Airport {

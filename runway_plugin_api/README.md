@@ -42,6 +42,13 @@ display_name    = "My Area"
 entry           = "area_my_area"   # path relative to plugin/
 ```
 
+There is no airport list to maintain: the sector file is the source of
+truth. The host sends you every airport from the open sector file
+(matched to your area by `area.toml`'s `sector_file_prefix`), minus your
+`ignore_airports` and minus anything ATIS already decided. Answer
+`handled: false` for airports you have no opinion on.
+
+
 Optional: `description`, `min_core_version` (hosts older than this
 refuse to spawn you).
 
@@ -223,11 +230,37 @@ ln -s "$PWD/my-area" "$HOME/.local/share/es_runway_selector/areas/my-area"
 
 es_runway_selector area list                     # should list "my-area"
 es_runway_selector area profile show my-area twr # sanity-check profile parsing
-es_runway_selector                                # full run
 ```
 
+Once that looks right, exercise your area through the **real** host
+pipeline — sector-file parsing, METAR ingestion, ATIS handling,
+plugin spawn, `.rwy` writing, HTML report — without a live EuroScope
+install, live METAR feed, or VATSIM connection:
+
+```bash
+es_runway_selector \
+    --sector-file test_fixtures/my-area.sct \
+    --metar-fixture test_fixtures/metars.txt \
+    --skip-atis --skip-app-launchers \
+    --rwy-out /tmp/my-area.rwy
+```
+
+- `--sector-file` points straight at a fixture `.sct` (its filename stem
+  must match your `area.toml`'s `sector_file_prefix`, e.g. `my-area.sct`
+  for `sector_file_prefix = "my-area"`), skipping the EuroScope-folder
+  search and picker dialog entirely.
+- `--metar-fixture` is a local file of raw METAR lines (one report per
+  line), used instead of a live fetch from `metar_urls`.
+- `--skip-atis` skips the live VATSIM ATIS fetch.
+- `--skip-app-launchers` skips spawning EuroScope/TrackAudio/etc.
+- `--rwy-out` writes the result somewhere other than next to the sector
+  file — handy when the fixture lives in a scratch directory. The file
+  must already exist (even empty) before the run.
+
 The host kills the subprocess after each cycle, so iterate by rebuilding
-and re-running.
+and re-running — either the curl loop above, the symlinked full run, or
+the offline pipeline, whichever gives the fastest feedback for what
+you're changing.
 
 ## 7. Publish
 
@@ -248,12 +281,17 @@ Then either:
 - **Primary registry** — open a PR against
   [`areas.json`](https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector/blob/main/areas.json).
   Once merged, anyone can `area install <name>`.
-- **Self-hosted** — host your own `areas.json` and tell users to add it
-  to their `config.local.toml`:
+- **Self-hosted** — host your own `areas.json`. If you also control the
+  FIR's sector-file package (most FIRs do), ship a
+  `runway_selector_registry.toml` **next to the `.sct`/`.rwy` files**:
 
   ```toml
   extra_registries = ["https://example.org/my-areas.json"]
   ```
+
+  Anyone who extracts your sector pack picks up your registry
+  automatically — no config edit needed. Otherwise, tell users to add
+  the same line to their own `config.local.toml`.
 
 Registry entry shape:
 
@@ -327,8 +365,8 @@ Source attribution matters — the `.rwy` writer prefers
 | You picked from…                        | Set `source` to | Notes                                             |
 | --------------------------------------- | --------------- | ------------------------------------------------- |
 | Wind / METAR                            | `Metar`         |                                                   |
-| `default_runways` in `area.toml`        | `Default`       | e.g. calm-wind runway at night                    |
-| Nothing — wind ambiguous, no METAR      | —               | Answer `handled: false`. The host falls back.     |
+| A built-in preferred configuration      | `Default`       | e.g. a hardcoded calm-wind direction              |
+| Nothing — wind ambiguous, no METAR      | —               | Answer `handled: false`. The host falls back to `area.toml`'s `default_runways` — you never read those yourself. |
 | Parallel runways, mixed ops             | usually `Metar` | Two entries, both `use = "Both"`.                 |
 | Parallel runways, segregated ops        | usually `Metar` | Two entries: one `Departing`, one `Arriving`.     |
 

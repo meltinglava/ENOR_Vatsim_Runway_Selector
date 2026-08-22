@@ -2,11 +2,12 @@
 //!
 //! The area that owns the run is the one whose `sector_file_prefix` matches
 //! the sector file the user opened. It owns every airport found in that
-//! sector file — `area.toml`'s `ignore_airports` was already applied when
-//! the sector file was loaded, so there is no separate airport list to
-//! maintain. The plugin is spawned via [`runway_selector_plugin_host`],
-//! receives one batch `POST /runway-selections`, and has its selections
-//! written back onto [`Airports`].
+//! sector file's `[RUNWAY]` section — `area.toml`'s `ignore_airports` was
+//! already applied when the sector file was loaded, so there is no separate
+//! airport list to maintain. The plugin is spawned via
+//! [`runway_selector_plugin_host`], receives one batch
+//! `POST /runway-selections`, and has its selections written back onto
+//! [`Airports`].
 //!
 //! ATIS is applied by the host before this runs; airports that already have
 //! an ATIS selection are *not* sent to the plugin (no pointless round-trip,

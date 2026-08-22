@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 runway_plugin_api = { path = "../runway_plugin_api" }
-runway_selector_area_config = { path = "../runway_selector_area_config" }
 
 axum = { workspace = true }
 jiff = { workspace = true }
@@ -25,6 +24,7 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 indexmap = { workspace = true }
+runway_selector_area_config = { path = "../runway_selector_area_config" }
 runway_selector_plugin_host = { path = "../runway_selector_plugin_host" }
 semver = "1.0.27"
 tempfile = "3.27.0"

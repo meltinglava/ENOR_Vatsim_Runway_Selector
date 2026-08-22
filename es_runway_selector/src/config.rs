@@ -96,6 +96,44 @@ impl ESConfig {
         })
     }
 
+    /// Build a config from an explicit `.sct` path instead of searching for
+    /// one — no directory scan, no `rfd` dialog, no dependency on a live
+    /// EuroScope install. Used by `--sector-file` for offline/fixture runs.
+    pub fn from_explicit_sct_path(sct_path: &Path) -> anyhow::Result<Self> {
+        if !sct_path.is_file() {
+            return Err(anyhow::anyhow!(
+                "Sector file {} does not exist",
+                sct_path.display()
+            ));
+        }
+        let euroscope_config_folder = match sct_path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let sector_file_prefix = sct_path
+            .file_stem()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} has no file stem to use as sector file prefix",
+                    sct_path.display()
+                )
+            })?
+            .to_string_lossy()
+            .into_owned();
+
+        let (config, config_file_path) = setup_configuration(false)
+            .map_err(|e| anyhow::anyhow!("Failed to load configuration: {e}"))?;
+        let app_launchers = get_app_launchers(&config_file_path);
+
+        Ok(Self {
+            euroscope_config_folder,
+            sector_file_prefix,
+            config,
+            config_file_path,
+            app_launchers,
+        })
+    }
+
     pub fn get_sct_file_path(&self) -> PathBuf {
         self.euroscope_config_folder
             .join(format!("{}.sct", self.sector_file_prefix))
@@ -491,7 +529,7 @@ fn setup_configuration(clean_config: bool) -> Result<(Configurable, PathBuf), Co
     }
 }
 
-fn search_for_newest_sct_file(prefixes: &[String]) -> Option<(PathBuf, String)> {
+pub(crate) fn search_for_newest_sct_file(prefixes: &[String]) -> Option<(PathBuf, String)> {
     let bd = BaseDirs::new();
     let ud = UserDirs::new();
     let mut possibilities = [

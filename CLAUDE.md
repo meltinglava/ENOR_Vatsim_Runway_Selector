@@ -18,7 +18,7 @@ The project is relesed with cargo-release. At this time the application is not r
 
 ### Host
 
-- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. `plugin_runner` spawns the active area's subprocess (the area whose `sector_file_prefix` matches the open sector file owns every airport that file produced, minus `area.toml`'s `ignore_airports`), sends one batch `POST /runway-selections`, and merges the results back onto `Airports::runways_in_use`. ATIS is applied host-side; airports already decided by ATIS are not sent to plugins. Plugin failures are logged, surfaced to the user, and degrade to defaults.
+- **`es_runway_selector/`** — Main application binary. Handles EuroScope config discovery, sector-file loading, METAR + ATIS fetching, `.rwy` writing, app launchers, the first-run wizard, and the `area …` subcommand for installing/updating areas. `plugin_runner` spawns the active area's subprocess (the area whose `area.toml` `sector_file_prefix` matches the loaded sector file); the airport list is the sector file's `[RUNWAY]` airports minus the area's `ignore_airports` — there is no per-area ICAO list to maintain. It sends one batch `POST /runway-selections` and merges the results back onto `Airports::runways_in_use`. ATIS is applied host-side; airports already decided by ATIS are not sent to the plugin. Plugin failures are logged, surfaced to the user, and degrade to defaults.
 
 ### Core libraries
 
@@ -107,7 +107,7 @@ The user-facing rule: **anything ending in `.local.toml` belongs to you and surv
 5. Fetch METARs from the configured URLs (`https://metar.vatsim.net/EN` + `/ESKS` currently hardcoded; moves to `area.toml`) and parse via `metar_decoder`.
 6. Fetch VATSIM v3 data and parse `text_atis` per relevant ICAO via `runway_selector_core::atis::find_runway_in_use_from_atis` — a regex stack that recognizes `RUNWAY XX IN USE`, `APPROACH RUNWAY XX`, `DEPARTURE RUNWAY XX`, `RUNWAYS XX AND YY IN USE`, and the split `ARRIVAL/DEPARTURE INFORMATION` bulletin form.
 7. `plugin_runner::run_area_selections` runs the active area (matched by `sector_file_prefix`): it owns every airport loaded from the sector file (`ignore_airports` already excluded at load), airports already decided by ATIS are excluded, the plugin is spawned via `runway_selector_plugin_host::spawn_plugin`, one batch `POST /runway-selections` (with request-level `timestamp_utc` + `area_timezone`) is sent, and `handled: true` results are written into `Airports::runways_in_use` under the source the plugin attributes (METAR / DEFAULT) with the response `tags` stored on the airport for the report. If no area is installed (or the plugin errors), the host logs, surfaces a warning, and continues with defaults only.
-8. `Airports::apply_default_runways` fills the `Default` source from the area's `default_runways` for airports still without any selection.
+8. `Airports::apply_default_runways` fills the `Default` source from the area's `default_runways` for airports still without any selection (`handled: false` or plugin failure). The configured value is a heading prefix; every matching direction is selected (`ENGM = 1` → `01L` + `01R`). Fallback config is read only by the host — plugins never read `default_runways`.
 9. Spawn EuroScope launchers (`prf` paths joined onto the sector-file folder; the first instance launches immediately, subsequent ones wait `es_main_window_delay_ms`, default 2000 ms, so the first window becomes the main one).
 10. Write the `.rwy` file and open a temp HTML runway report (`make_runway_report_html`, askama template `runway_selector_core/templates/runway_report.html`) via `open::that_detached`.
 
@@ -116,7 +116,7 @@ The user-facing rule: **anything ending in `.local.toml` belongs to you and surv
 Every per-airport selection rule lives in `area_enor::selector` and operates on the `runway_plugin_api` request types (parsed METAR, pre-computed `headwind_kt`/`tailwind_kt`/`crosswind_kt` per direction). Dispatch is by ICAO.
 
 - **Generic** — pick the runway whose `headwind_kt` is strictly the highest, with a ≥ 2 kt margin over the runner-up (via `runway_plugin_api::helpers::best_headwind`). Tied / ambiguous winds answer `handled: false` and let the host fall back to area defaults.
-- **ENGM (Oslo Gardermoen)** — `select_for_engm` picks a direction prefix ("01" or "19") by grouping runways and picking the prefix with the highest max headwind (same 2 kt margin), then chooses **Mixed / Segregated / Single** ops based on the request's `now_utc` + `area_timezone` (segregated after 22:30 local, single before 06:30 local) and METAR-derived LVP triggers — cloud ceiling < 1500 ft, any RVR group, visibility < 5000 m, vertical visibility, freezing weather, possible-de-ice precipitation with temperature < 5 °C (or unknown). Mixed emits `XXL`/`XXR` as `Both`; Segregated splits dep/arr (`L`=Departing, `R`=Arriving); Single picks `01L` or `19R`.
+- **ENGM (Oslo Gardermoen)** — `select_for_engm` picks a direction prefix ("01" or "19") by grouping runways and picking the prefix with the highest max headwind (same 2 kt margin; ambiguous wind falls back to the hardcoded preferred "01" direction, attributed `Default`), then chooses **Mixed / Segregated / Single** ops based on the request's `now_utc` + `area_timezone` (segregated after 22:30 local, single before 06:30 local) and METAR-derived LVP triggers — cloud ceiling < 1500 ft, any RVR group, visibility < 5000 m, vertical visibility, freezing weather, possible-de-ice precipitation with temperature < 5 °C (or unknown). Mixed emits `XXL`/`XXR` as `Both`; Segregated splits dep/arr (`L`=Departing, `R`=Arriving); Single picks `01L` or `19R`.
 - **ENZV (Stavanger)** — `select_for_enzv` defaults to `18/36` (whichever has the higher headwind). If that runway's pre-computed `crosswind_kt` is ≥ 15 and the perpendicular runway has a strictly lower crosswind, it switches to the secondary (10/28) runway.
 
 Core (`runway_selector_core::airport`) owns the wind-component math (`runway_max_headwind` / `runway_max_crosswind` / `runway_wind_components`) — computed **once** on the host, used both for the HTML report's wind columns and to populate the per-runway wind fields shipped to plugins (`plugin_convert::airport_to_request`). Plugins never do wind trigonometry.
@@ -132,17 +132,24 @@ Core (`runway_selector_core::airport`) owns the wind-component math (`runway_max
 - `--clean-config` / `-c` — rewrite the config from the embedded `config.toml` template (preserves `euroscope_config_folder` if previously set).
 - `--log-level` / `-l` — env-filter string for the JSON file logger (default `info,es_runway_selector=trace,reqwest=debug`). `RUST_LOG` still controls the stdout layer.
 - `--previous-log-path` (hidden) — used internally by the self-update restart path.
+- `--sector-file <PATH>` — explicit `.sct` path for offline/dev runs; bypasses `ESConfig::find_euroscope_config_folder`'s directory search and the `rfd` picker entirely via `ESConfig::from_explicit_sct_path`. Also skips the GitHub self-update check even on non-debug builds, so a release binary run this way never touches the network unexpectedly.
+- `--metar-fixture <PATH>` — local file of raw METAR lines (one report per line), used instead of a live `metar_urls` fetch (`Airports::add_metars_from_text`, sharing `runway_selector_core::metar::parse_metar_lines` with the live path).
+- `--skip-atis` — skip the live VATSIM v3 ATIS fetch.
+- `--skip-app-launchers` — skip spawning EuroScope/TrackAudio/etc.
+- `--rwy-out <PATH>` — write the `.rwy` output here instead of next to the sector file; the file must already exist (even empty), since the writer reads it first to preserve any `ACTIVE_AIRPORT:` prefix.
+
+These five compose into an **offline pipeline mode**: a plugin author points `--sector-file`/`--metar-fixture` at fixtures and passes `--skip-atis --skip-app-launchers` to exercise the real host pipeline (sector parse → METAR → plugin spawn → `.rwy` write → HTML report) with no live EuroScope, METAR, or VATSIM dependency. See `es_runway_selector/tests/offline_run.rs` and `runway_plugin_api/README.md` §6.
 
 Subcommands:
 
 - `area list` — list locally installed areas
-- `area available` — list areas the registry advertises
-- `area install <name>` — download, verify SHA-256, and extract
+- `area available` — list areas the registry advertises. Registry sources are `area_registry_url` + `extra_registries` from `config.toml`, plus (additively) any `extra_registries` in a `runway_selector_registry.toml` sidecar found next to the discovered sector file (`area_cli::with_sidecar_registries`, using the same "empty prefixes accept any `.sct`" search as the first-run wizard) — lets a FIR ship a self-hosted registry alongside their sector-file package with no `config.local.toml` edit required of their users.
+- `area install <name>` — download, verify SHA-256, and extract (registry sources same as `area available`)
 - `area remove <name>`
 - `area profile list` — every profile in every installed area
 - `area profile show <area> <profile>` — print the resolved profile contents
 
-On non-debug builds, `main` checks GitHub releases via `self_update`. On a successful update it respawns the new binary with `--previous-log-path` pointing at the current JSON log file so the upgrade continues in one log.
+On non-debug builds (and when `--sector-file` isn't set), `main` checks GitHub releases via `self_update`. On a successful update it respawns the new binary with `--previous-log-path` pointing at the current JSON log file so the upgrade continues in one log.
 
 ### Logging
 

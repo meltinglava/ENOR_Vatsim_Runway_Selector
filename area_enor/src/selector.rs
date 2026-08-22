@@ -30,7 +30,6 @@ use runway_plugin_api::{
     RunwaySelectionsRequest, RunwaySelectionsResponse, RunwayUse, RunwayUseEntry, SelectionSource,
     SelectionTag, Tag, WeatherDescriptor, helpers::best_headwind, tags,
 };
-use runway_selector_area_config::AreaConfig;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -69,13 +68,12 @@ pub enum SelectError {
     BadTimestamp { value: String, message: String },
 }
 
-pub struct EnorSelector {
-    config: AreaConfig,
-}
+#[derive(Default)]
+pub struct EnorSelector;
 
 impl EnorSelector {
-    pub fn new(config: AreaConfig) -> Self {
-        Self { config }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Handle a full batch request. Never panics on bad input: a malformed
@@ -203,18 +201,14 @@ impl EnorSelector {
 
     /// Returns the ENGM direction prefix ("01" or "19") and the source the
     /// selection should be attributed to (METAR if we picked from wind,
-    /// Default if we fell back to area defaults).
+    /// Default if the wind was ambiguous). The fallback direction is 01 —
+    /// northerly operations are ENGM's preferred calm-wind configuration —
+    /// so the time-of-day/LVP mode logic still applies on ambiguous wind.
     fn engm_direction(&self, airport: &AirportSelectionRequest) -> (String, SelectionSource) {
         if let Some(dir) = pick_best_direction_prefix(&airport.runways) {
             return (dir, SelectionSource::Metar);
         }
-        let fallback = self
-            .config
-            .default_runways
-            .get(&airport.icao)
-            .map(|n| format!("{n:02}"))
-            .unwrap_or_else(|| "01".to_string());
-        (fallback, SelectionSource::Default)
+        ("01".to_string(), SelectionSource::Default)
     }
 
     /// ENZV: keep the main 18/36 runway unless its crosswind ≥ 15 kt and the
@@ -479,15 +473,7 @@ mod tests {
     };
 
     fn enor_selector() -> EnorSelector {
-        let config = AreaConfig {
-            default_runways: indexmap::IndexMap::from([
-                ("ENGM".to_string(), 1u8),
-                ("ENZV".to_string(), 18u8),
-            ]),
-            time_zone: Some("Europe/Oslo".to_string()),
-            ..AreaConfig::default()
-        };
-        EnorSelector::new(config)
+        EnorSelector::new()
     }
 
     fn runway(identifier: &str, headwind: i32, crosswind: i32) -> RunwayInfo {

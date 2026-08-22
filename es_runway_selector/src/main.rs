@@ -40,6 +40,47 @@ struct Cli {
     log_level: Option<String>,
     #[clap(long, hide = true)]
     previous_log_path: Option<PathBuf>,
+
+    #[clap(long)]
+    /// Explicit path to a `.sct` file for offline/dev runs. Bypasses the
+    /// folder search and the folder-picker dialog entirely.
+    sector_file: Option<PathBuf>,
+    #[clap(long)]
+    /// Path to a local file of raw METAR lines (one report per line), used
+    /// instead of a live METAR fetch.
+    metar_fixture: Option<PathBuf>,
+    #[clap(long)]
+    /// Skip the live VATSIM ATIS fetch.
+    skip_atis: bool,
+    #[clap(long)]
+    /// Skip spawning EuroScope/TrackAudio/etc.
+    skip_app_launchers: bool,
+    #[clap(long)]
+    /// Write the `.rwy` output here instead of next to the sector file.
+    rwy_out: Option<PathBuf>,
+}
+
+/// Flags that together let a plugin author run the real pipeline against
+/// local fixtures instead of a live EuroScope + network setup. See
+/// `--sector-file`, `--metar-fixture`, `--skip-atis`, `--skip-app-launchers`,
+/// and `--rwy-out` on [`Cli`].
+#[derive(Debug, Default, Clone)]
+struct OfflineOptions {
+    metar_fixture: Option<PathBuf>,
+    skip_atis: bool,
+    skip_app_launchers: bool,
+    rwy_out: Option<PathBuf>,
+}
+
+impl From<&Cli> for OfflineOptions {
+    fn from(cli: &Cli) -> Self {
+        Self {
+            metar_fixture: cli.metar_fixture.clone(),
+            skip_atis: cli.skip_atis,
+            skip_app_launchers: cli.skip_app_launchers,
+            rwy_out: cli.rwy_out.clone(),
+        }
+    }
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -98,6 +139,7 @@ fn update() -> Result<bool> {
 struct PreparedStartup {
     config: Arc<ESConfig>,
     installed_areas: Vec<area_runtime::InstalledArea>,
+    offline: OfflineOptions,
 }
 
 fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
@@ -114,15 +156,19 @@ fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
     };
     let installed_prefixes = area_runtime::installed_sector_file_prefixes(&installed_areas);
 
-    let mut config = ESConfig::find_euroscope_config_folder(cli.clean_config, &installed_prefixes)
-        .ok_or_else(|| {
-            anyhow!(
-                "Could not locate a EuroScope sector file (looked for prefixes: {:?}). \
-                 Install an area with `es_runway_selector area install <name>` or set \
-                 `euroscope_config_folder` in your config.toml.",
-                installed_prefixes
-            )
-        })?;
+    let mut config = match &cli.sector_file {
+        Some(sct_path) => ESConfig::from_explicit_sct_path(sct_path)
+            .with_context(|| format!("Loading explicit sector file {}", sct_path.display()))?,
+        None => ESConfig::find_euroscope_config_folder(cli.clean_config, &installed_prefixes)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Could not locate a EuroScope sector file (looked for prefixes: {:?}). \
+                     Install an area with `es_runway_selector area install <name>` or set \
+                     `euroscope_config_folder` in your config.toml.",
+                    installed_prefixes
+                )
+            })?,
+    };
 
     // First-run wizard: tell the user what to install if they haven't yet.
     // Always informational — never blocks the main flow.
@@ -148,6 +194,7 @@ fn prepare_startup(cli: &Cli) -> Result<PreparedStartup> {
     Ok(PreparedStartup {
         config,
         installed_areas,
+        offline: OfflineOptions::from(cli),
     })
 }
 
@@ -155,6 +202,7 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
     let PreparedStartup {
         config,
         installed_areas,
+        offline,
     } = prepared;
 
     // Everything area-specific — METAR feeds, ignore list, defaults, and the
@@ -184,13 +232,17 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
         .map(|a| a.config.metar_urls.iter().map(String::as_str).collect())
         .unwrap_or_default();
 
-    let config_task1 = config.clone();
-    let task1 = tokio::spawn(async move {
-        let handles = config_task1.run_apps(false).await;
-        for handle in handles {
-            handle.await.unwrap();
-        }
-    });
+    let task1 = if offline.skip_app_launchers {
+        None
+    } else {
+        let config_task1 = config.clone();
+        Some(tokio::spawn(async move {
+            let handles = config_task1.run_apps(false).await;
+            for handle in handles {
+                handle.await.unwrap();
+            }
+        }))
+    };
     let mut airports = Airports::new();
     let sct_path = config.get_sct_file_path();
     let mut sct_file = File::open(&sct_path)
@@ -198,12 +250,18 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
     airports
         .load_airports_from_sector_file(&mut sct_file, ignore_airports)
         .with_context(|| format!("Parsing sector file {}", sct_path.display()))?;
-    if metar_urls.is_empty() {
+    if let Some(fixture_path) = &offline.metar_fixture {
+        let text = std::fs::read_to_string(fixture_path)
+            .with_context(|| format!("Reading METAR fixture {}", fixture_path.display()))?;
+        airports.add_metars_from_text(&text, ignore_airports);
+    } else if metar_urls.is_empty() {
         warn!("Active area declares no METAR URLs; skipping METAR fetch");
     } else if let Err(e) = airports.add_metars(&metar_urls, ignore_airports).await {
         warn!(error = ?e, "METAR fetch failed; continuing without METAR-derived selections");
     }
-    if let Err(e) = airports.read_atis_and_apply_runways().await {
+    if offline.skip_atis {
+        info!("Skipping ATIS fetch (--skip-atis)");
+    } else if let Err(e) = airports.read_atis_and_apply_runways().await {
         warn!(error = ?e, "ATIS fetch failed; continuing without ATIS-derived selections");
     }
 
@@ -220,17 +278,24 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
 
     airports.apply_default_runways(default_runways);
     airports.sort();
-    let rwy_path = config.get_rwy_file_path();
+    let rwy_path = offline
+        .rwy_out
+        .clone()
+        .unwrap_or_else(|| config.get_rwy_file_path());
     write_runways_to_rwy_file(&rwy_path, &airports)
         .with_context(|| format!("Writing runway file {}", rwy_path.display()))?;
-    let task2 = tokio::spawn(async move {
-        let handles = config.run_apps(true).await;
-        for handle in handles {
-            handle.await.unwrap();
-        }
-    });
+    let task2 = if offline.skip_app_launchers {
+        None
+    } else {
+        Some(tokio::spawn(async move {
+            let handles = config.run_apps(true).await;
+            for handle in handles {
+                handle.await.unwrap();
+            }
+        }))
+    };
 
-    let tasks = [task1, task2];
+    let tasks: Vec<_> = [task1, task2].into_iter().flatten().collect();
 
     let no_runways_in_use = airports.airports_without_runway_config();
     for airport in no_runways_in_use {
@@ -336,7 +401,7 @@ fn main() -> Result<()> {
     let mut cli = Cli::parse();
     let (log_file_path, _guard) = setup_logging(&cli).context("Setting up logging")?;
     info!("ES Runway Selector version {}", cargo_crate_version!());
-    if !cfg!(debug_assertions) && cli.previous_log_path.is_none() {
+    if !cfg!(debug_assertions) && cli.previous_log_path.is_none() && cli.sector_file.is_none() {
         match update() {
             Ok(true) => {
                 info!("Update check completed, restarting application to new version");

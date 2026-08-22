@@ -123,6 +123,12 @@ it to your `config.local.toml`:
 extra_registries = ["https://example.org/my-areas.json"]
 ```
 
+If a FIR ships a `runway_selector_registry.toml` next to your `.sct`/
+`.rwy` files (in your EuroScope sector-file folder), it's picked up
+automatically for `area available`/`area install` — no config edit
+needed. It's purely additive to whatever you set in
+`config.local.toml`.
+
 ---
 
 ## Trouble?

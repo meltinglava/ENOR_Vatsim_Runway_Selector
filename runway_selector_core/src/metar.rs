@@ -16,15 +16,23 @@ const METAR_FETCH_RETRIES: u32 = 3;
 /// airports known to publish unparseable reports.
 pub async fn get_metars(urls: &[&str], ignore: &IndexSet<String>) -> CoreResult<Vec<Metar>> {
     let pages = try_join_all(urls.iter().map(async |url| get_metars_from_url(url).await)).await?;
-
-    let values = pages
+    Ok(pages
         .iter()
-        .flat_map(|s| s.lines())
+        .flat_map(|page| parse_metar_lines(page, ignore))
+        .collect())
+}
+
+/// Parse one page of raw METAR text (one report per line) into `Metar`s,
+/// dropping any ICAO present in `ignore` and any line the decoder rejects.
+///
+/// Shared by the live fetch path above and by offline/fixture runs
+/// (`Airports::add_metars_from_text`) so both take identical parsing.
+pub fn parse_metar_lines(text: &str, ignore: &IndexSet<String>) -> Vec<Metar> {
+    text.lines()
         .filter(|line| !ignore.contains(&line[0..4]))
         .map(Metar::from_str)
         .filter_map(Result::ok_or_log)
-        .collect();
-    Ok(values)
+        .collect()
 }
 
 #[tracing::instrument]

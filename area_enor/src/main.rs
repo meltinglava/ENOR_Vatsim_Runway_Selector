@@ -2,10 +2,11 @@
 //! serves the HTTP/JSON plugin contract from `runway_plugin_api`:
 //! `GET /health`, `POST /runway-selections`, `POST /shutdown`.
 //!
-//! Bind port comes from `RUNWAY_SELECTOR_PORT`; the area's package directory
-//! (where `area.toml` lives) comes from `RUNWAY_SELECTOR_AREA_DIR`.
+//! Bind port comes from `RUNWAY_SELECTOR_PORT`. Area configuration
+//! (`area.toml` default runways, ignore list) is host business: the host
+//! applies defaults to whatever this plugin answers `handled: false` for.
 
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -14,7 +15,6 @@ use axum::{
     routing::{get, post},
 };
 use runway_plugin_api::{RunwaySelectionsRequest, RunwaySelectionsResponse};
-use runway_selector_area_config::{AreaConfig, load_area_config};
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -41,21 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .and_then(|s| s.parse().ok())
         .ok_or("RUNWAY_SELECTOR_PORT must be set to a u16")?;
 
-    let area_dir: PathBuf = env::var("RUNWAY_SELECTOR_AREA_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .ok_or("RUNWAY_SELECTOR_AREA_DIR must point at the area package")?;
-
-    let area_config = match load_area_config(&area_dir) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = ?e, "Failed to load area.toml, using defaults");
-            AreaConfig::default()
-        }
-    };
-
     let state = Arc::new(AppState {
-        selector: selector::EnorSelector::new(area_config),
+        selector: selector::EnorSelector::new(),
         shutdown: Notify::new(),
     });
 

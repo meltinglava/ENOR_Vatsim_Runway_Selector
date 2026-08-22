@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use runway_selector_area_config::{TopLevelConfig, load_with_local_override};
+use runway_selector_area_config::{
+    TopLevelConfig, load_registry_sidecar, load_with_local_override,
+};
 use runway_selector_areas::{
     fetch_combined_registry, install_area, list_installed_areas, remove_area,
 };
 use tracing::info;
 
-use crate::config::es_runway_selector_project_dir;
+use crate::config::{es_runway_selector_project_dir, search_for_newest_sct_file};
 
 #[derive(Debug, Subcommand)]
 pub enum AreaCommand {
@@ -45,12 +47,31 @@ pub async fn run_area_command(cmd: AreaCommand) -> Result<()> {
 
     match cmd {
         AreaCommand::List => print_installed(&install_dir)?,
-        AreaCommand::Available => print_available(&top_level).await?,
-        AreaCommand::Install { name } => do_install(&top_level, &install_dir, &name).await?,
+        AreaCommand::Available => print_available(&with_sidecar_registries(top_level)).await?,
+        AreaCommand::Install { name } => {
+            do_install(&with_sidecar_registries(top_level), &install_dir, &name).await?
+        }
         AreaCommand::Remove { name } => do_remove(&install_dir, &name)?,
         AreaCommand::Profile { cmd } => run_profile_command(cmd, &install_dir)?,
     }
     Ok(())
+}
+
+/// Merge in any `extra_registries` declared by a sidecar
+/// `runway_selector_registry.toml` next to the user's sector file, if one is
+/// found. Lets a FIR that self-hosts a registry ship it alongside their
+/// sector-file package so their users pick it up with no manual
+/// `config.local.toml` edit. Purely additive — never touches
+/// `area_registry_url` or the user's own `extra_registries`.
+fn with_sidecar_registries(mut top_level: TopLevelConfig) -> TopLevelConfig {
+    // Empty prefixes: like the first-run wizard, we don't know yet which
+    // area's sector file this is — accept any `.sct` found nearby.
+    if let Some((sector_folder, _prefix)) = search_for_newest_sct_file(&[]) {
+        top_level
+            .extra_registries
+            .extend(load_registry_sidecar(&sector_folder));
+    }
+    top_level
 }
 
 fn run_profile_command(cmd: ProfileCommand, install_dir: &Path) -> Result<()> {

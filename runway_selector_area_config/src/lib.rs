@@ -138,6 +138,52 @@ impl Default for TopLevelConfig {
     }
 }
 
+/// Filename of the optional sidecar registry file a FIR can ship alongside
+/// their sector-file package — i.e. in the same folder as the `.sct`/`.rwy`
+/// files. See [`load_registry_sidecar`].
+pub const REGISTRY_SIDECAR_FILENAME: &str = "runway_selector_registry.toml";
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct RegistrySidecar {
+    extra_registries: Vec<String>,
+}
+
+/// Read `<sector_folder>/runway_selector_registry.toml` if present.
+///
+/// A FIR that self-hosts an area registry can ship this one file next to
+/// their sector-file package so their users pick it up automatically, with
+/// no `config.local.toml` edit required. Same shape as [`TopLevelConfig`]'s
+/// `extra_registries` field:
+///
+/// ```toml
+/// extra_registries = ["https://example.org/my-areas.json"]
+/// ```
+///
+/// Never fails the caller — a missing file returns an empty `Vec`, and a
+/// malformed one logs a warning and also returns an empty `Vec`, matching
+/// the graceful-degradation behavior used elsewhere for optional config.
+pub fn load_registry_sidecar(sector_folder: &Path) -> Vec<String> {
+    let path = sector_folder.join(REGISTRY_SIDECAR_FILENAME);
+    if !path.exists() {
+        return Vec::new();
+    }
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(source) => {
+            tracing::warn!(path = %path.display(), error = %source, "Failed to read registry sidecar file; ignoring");
+            return Vec::new();
+        }
+    };
+    match toml::from_str::<RegistrySidecar>(&raw) {
+        Ok(sidecar) => sidecar.extra_registries,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "Failed to parse registry sidecar file; ignoring");
+            Vec::new()
+        }
+    }
+}
+
 /// Read `area.toml` from `area_dir`, apply `area.local.toml` if present, and
 /// parse the merged value.
 pub fn load_area_config(area_dir: &Path) -> AreaConfigResult<AreaConfig> {
@@ -239,6 +285,37 @@ pub fn merge_local_overrides(base: &mut toml::Value, overrides: toml::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_registry_sidecar_returns_empty_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_registry_sidecar(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn load_registry_sidecar_parses_extra_registries() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join(REGISTRY_SIDECAR_FILENAME),
+            r#"extra_registries = ["https://example.org/my-areas.json"]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_registry_sidecar(dir.path()),
+            vec!["https://example.org/my-areas.json".to_string()],
+        );
+    }
+
+    #[test]
+    fn load_registry_sidecar_returns_empty_on_malformed_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join(REGISTRY_SIDECAR_FILENAME),
+            "not valid toml [[[",
+        )
+        .unwrap();
+        assert!(load_registry_sidecar(dir.path()).is_empty());
+    }
 
     #[test]
     fn merge_replaces_scalar() {
@@ -394,6 +471,8 @@ version = "0.1.0"
 display_name = "Polaris / ENOR"
 runtime = "rust"
 entry = "area_enor"
+# Removed from the schema; older published manifests still carry it and
+# must keep parsing.
 supported_icaos = ["ENGM", "ENZV"]
 "#,
         )
