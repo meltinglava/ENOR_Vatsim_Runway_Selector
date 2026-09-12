@@ -549,6 +549,14 @@ impl Airports {
             .collect()
     }
 
+    /// Write the HTML runway report to `path` without opening it. Used by
+    /// offline/dev runs (and tests) that want the report content but no
+    /// browser window.
+    pub fn write_runway_report_html(&self, path: &std::path::Path) -> io::Result<()> {
+        let mut file = std::fs::File::create(path)?;
+        self.make_runway_report_html_with_writer(&mut file)
+    }
+
     pub fn make_runway_report_html(&self) -> io::Result<()> {
         let mut file = tempfile::Builder::new()
             .prefix("runways_")

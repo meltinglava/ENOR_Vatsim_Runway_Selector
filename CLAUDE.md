@@ -137,8 +137,10 @@ Core (`runway_selector_core::airport`) owns the wind-component math (`runway_max
 - `--skip-atis` — skip the live VATSIM v3 ATIS fetch.
 - `--skip-app-launchers` — skip spawning EuroScope/TrackAudio/etc.
 - `--rwy-out <PATH>` — write the `.rwy` output here instead of next to the sector file; the file must already exist (even empty), since the writer reads it first to preserve any `ACTIVE_AIRPORT:` prefix.
+- `--report-out <PATH>` — write the HTML runway report to this path instead of a temp file, and do **not** open it in a browser (keeps offline/dev runs and the integration test headless).
+- `--skip-report` — don't generate or open the HTML runway report at all.
 
-These five compose into an **offline pipeline mode**: a plugin author points `--sector-file`/`--metar-fixture` at fixtures and passes `--skip-atis --skip-app-launchers` to exercise the real host pipeline (sector parse → METAR → plugin spawn → `.rwy` write → HTML report) with no live EuroScope, METAR, or VATSIM dependency. See `es_runway_selector/tests/offline_run.rs` and `runway_plugin_api/README.md` §6.
+These flags compose into an **offline pipeline mode**: a plugin author points `--sector-file`/`--metar-fixture` at fixtures and passes `--skip-atis --skip-app-launchers --report-out <PATH>` to exercise the real host pipeline (sector parse → METAR → plugin spawn → `.rwy` write → HTML report) with no live EuroScope, METAR, or VATSIM dependency. See `es_runway_selector/tests/offline_run.rs` and `runway_plugin_api/README.md` §6.
 
 Subcommands:
 

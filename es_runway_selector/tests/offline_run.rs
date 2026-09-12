@@ -1,6 +1,6 @@
 //! End-to-end integration test for the offline pipeline flags
 //! (`--sector-file`, `--metar-fixture`, `--skip-atis`, `--skip-app-launchers`,
-//! `--rwy-out`): spawns the real `es_runway_selector` binary against a
+//! `--rwy-out`, `--report-out`): spawns the real `es_runway_selector` binary against a
 //! fixture `.sct` and a fixture METAR file, with no live EuroScope install,
 //! no network METAR/ATIS fetch, and no app launching. This is the
 //! host-level counterpart to `area_enor/tests/e2e_spawn_select.rs`, which
@@ -68,6 +68,8 @@ ENXX = 9
     let rwy_out = home.path().join("output.rwy");
     fs::write(&rwy_out, "").unwrap();
 
+    let report_out = home.path().join("report.html");
+
     let output = Command::new(env!("CARGO_BIN_EXE_es_runway_selector"))
         .env("HOME", home.path())
         .env_remove("XDG_CONFIG_HOME")
@@ -80,6 +82,10 @@ ENXX = 9
         .arg("--skip-app-launchers")
         .arg("--rwy-out")
         .arg(&rwy_out)
+        // Keep the test headless: write the report to a file instead of
+        // opening it in the developer's browser.
+        .arg("--report-out")
+        .arg(&report_out)
         .output()
         .expect("failed to run es_runway_selector");
 
@@ -98,5 +104,11 @@ ENXX = 9
     assert!(
         rwy_contents.contains("ACTIVE_RUNWAY:ENXX:09:0"),
         "expected an arrival line for the default-runway fallback, got:\n{rwy_contents}"
+    );
+
+    let report = fs::read_to_string(&report_out).unwrap();
+    assert!(
+        report.contains("ENXX"),
+        "expected the HTML report to mention the airport, got:\n{report}"
     );
 }

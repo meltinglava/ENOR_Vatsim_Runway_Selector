@@ -242,7 +242,8 @@ es_runway_selector \
     --sector-file test_fixtures/my-area.sct \
     --metar-fixture test_fixtures/metars.txt \
     --skip-atis --skip-app-launchers \
-    --rwy-out /tmp/my-area.rwy
+    --rwy-out /tmp/my-area.rwy \
+    --report-out /tmp/my-area-report.html
 ```
 
 - `--sector-file` points straight at a fixture `.sct` (its filename stem
@@ -256,6 +257,9 @@ es_runway_selector \
 - `--rwy-out` writes the result somewhere other than next to the sector
   file — handy when the fixture lives in a scratch directory. The file
   must already exist (even empty) before the run.
+- `--report-out` writes the HTML runway report to a path instead of a
+  temp file and, importantly, does *not* open it in your browser.
+  `--skip-report` skips the report entirely.
 
 The host kills the subprocess after each cycle, so iterate by rebuilding
 and re-running — either the curl loop above, the symlinked full run, or

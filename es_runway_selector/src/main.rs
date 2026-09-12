@@ -58,18 +58,27 @@ struct Cli {
     #[clap(long)]
     /// Write the `.rwy` output here instead of next to the sector file.
     rwy_out: Option<PathBuf>,
+    #[clap(long)]
+    /// Write the HTML runway report here instead of a temp file, and do not
+    /// open it in a browser.
+    report_out: Option<PathBuf>,
+    #[clap(long)]
+    /// Do not generate/open the HTML runway report at all.
+    skip_report: bool,
 }
 
 /// Flags that together let a plugin author run the real pipeline against
 /// local fixtures instead of a live EuroScope + network setup. See
 /// `--sector-file`, `--metar-fixture`, `--skip-atis`, `--skip-app-launchers`,
-/// and `--rwy-out` on [`Cli`].
+/// `--rwy-out`, `--report-out`, and `--skip-report` on [`Cli`].
 #[derive(Debug, Default, Clone)]
 struct OfflineOptions {
     metar_fixture: Option<PathBuf>,
     skip_atis: bool,
     skip_app_launchers: bool,
     rwy_out: Option<PathBuf>,
+    report_out: Option<PathBuf>,
+    skip_report: bool,
 }
 
 impl From<&Cli> for OfflineOptions {
@@ -79,6 +88,8 @@ impl From<&Cli> for OfflineOptions {
             skip_atis: cli.skip_atis,
             skip_app_launchers: cli.skip_app_launchers,
             rwy_out: cli.rwy_out.clone(),
+            report_out: cli.report_out.clone(),
+            skip_report: cli.skip_report,
         }
     }
 }
@@ -303,9 +314,15 @@ async fn run(prepared: PreparedStartup) -> Result<()> {
             warn!(airport.icao, metar = "No METAR / unparsable metar", ?airport.runways, "No runway selected for:")
         }
     }
-    airports
-        .make_runway_report_html()
-        .context("Generating HTML runway report")?;
+    match (&offline.report_out, offline.skip_report) {
+        (_, true) => (),
+        (Some(path), false) => airports
+            .write_runway_report_html(path)
+            .with_context(|| format!("Writing HTML runway report {}", path.display()))?,
+        (None, false) => airports
+            .make_runway_report_html()
+            .context("Generating HTML runway report")?,
+    }
 
     for task in tasks {
         task.await.context("Joining background app-launcher task")?;
