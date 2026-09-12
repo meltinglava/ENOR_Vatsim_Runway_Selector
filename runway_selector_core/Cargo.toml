@@ -8,27 +8,24 @@ repository.workspace = true
 description = "Area-agnostic runway-selection logic for es_runway_selector"
 
 [dependencies]
-askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
-encoding = "0.2.33"
+askama = { workspace = true }
+encoding = { workspace = true }
 futures = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 jiff = { workspace = true }
-metar_decoder = { path = "../metar_decoder" }
+metar_decoder = { workspace = true }
 nom = { workspace = true }
-open = "5.3.5"
-regex = "1.12.3"
+open = { workspace = true }
+regex = { workspace = true }
 reqwest = { workspace = true }
-runway_plugin_api = { path = "../runway_plugin_api" }
-runway_selector_area_config = { path = "../runway_selector_area_config" }
-serde = { workspace = true }
-serde_with = { workspace = true }
-tempfile = "3.27.0"
+runway_plugin_api = { workspace = true }
+runway_selector_area_config = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-unwrap = { workspace = true }
-vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }
+vatsim_utils = { workspace = true }
 
 [dev-dependencies]
-tracing-test = { workspace = true }

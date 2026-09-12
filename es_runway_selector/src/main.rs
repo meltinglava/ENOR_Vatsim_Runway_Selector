@@ -18,7 +18,7 @@ use indexmap::{IndexMap, IndexSet};
 use jiff::{Zoned, tz::TimeZone};
 use runway_selector_core::{Airports, output::write_runways_to_rwy_file};
 use self_update::{
-    Status::{UpToDate, Updated},
+    VersionStatus::{UpToDate, Updated},
     cargo_crate_version,
 };
 use tracing::{info, trace, warn};
@@ -140,6 +140,11 @@ fn update() -> Result<bool> {
         Updated(v) => {
             info!("Updated to version: {}", v);
             true
+        }
+        // `VersionStatus` is `#[non_exhaustive]` as of self_update 1.0.
+        other => {
+            warn!("Unknown self-update status: {:?}", other);
+            false
         }
     })
 }

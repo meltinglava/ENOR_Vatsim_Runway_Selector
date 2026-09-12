@@ -22,22 +22,55 @@ description = "Automatic runway selection for EuroScope, with per-FIR area plugi
 repository = "https://github.com/meltinglava/ENOR_Vatsim_Runway_Selector"
 
 [workspace.dependencies]
+# Workspace members
+metar_decoder = { path = "metar_decoder" }
+runway_plugin_api = { path = "runway_plugin_api" }
+runway_selector_area_config = { path = "runway_selector_area_config" }
+runway_selector_areas = { path = "runway_selector_areas" }
+runway_selector_core = { path = "runway_selector_core" }
+runway_selector_plugin_host = { path = "runway_selector_plugin_host" }
+
+# External crates
+anyhow = "1.0.104"
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+clap = { version = "4.6.6", features = ["derive"] }
+config = { version = "0.15.25", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
 dialoguer = { version = "0.12.0", features = ["fuzzy-select"]}
-futures = { version = "0.3.32", default-features = false }
-indexmap = { version = "2.14.0", features = ["serde"] }
-itertools = "0.14.0"
-jiff = { version = "0.2.24", features = ["serde"] }
+directories = "6.0.0"
+encoding = "0.2.33"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+futures = { version = "0.3.34", default-features = false }
+hex = "0.4.3"
+indexmap = { version = "2.14.2", features = ["serde"] }
+itertools = "0.15.0"
+jiff = { version = "0.2.35", features = ["serde"] }
+libc = "0.2.189"
 nom = "8.0.0"
-reqwest = { version = "0.13.3", features = ["rustls-no-provider", "json"], default-features = false }
-rustls = { version = "0.23.40", default-features = false, features = ["ring", "std"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["indexmap", "preserve_order"] }
-serde_with = { version = "3.20.0", default-features = false, features = ["macros", "std"] }
-thiserror = "2.0.18"
-tokio = { version = "1.52.3", default-features = false, features = ["macros", "rt-multi-thread", "process", "time"] }
-toml = "1.1.2"
+open = "5.4.4"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", features = ["rustls-no-provider", "json"], default-features = false }
+rfd = "0.17.2"
+rustls = { version = "0.23.44", default-features = false, features = ["ring", "std"] }
+self_update = { version = "1.3.0", features = ["reqwest", "compression-zip-deflate", "archive-tar", "github"], default-features = false }
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["indexmap", "preserve_order"] }
+serde_with = { version = "3.23.0", default-features = false, features = ["macros", "std"] }
+sha2 = "0.11.0"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system", "serde"] }
+tar = "0.4.46"
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", default-features = false, features = ["macros", "rt-multi-thread", "process", "time"] }
+toml = "1.1.6"
 tracing = "0.1.44"
+tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "ansi", "json", "env-filter", "std"] }
 tracing-test = "0.2.6"
 tracing-unwrap = { version = "1.0.1", features = ["log-location"] }
+utoipa = "5"
+vatsim_utils = { version = "0.6.0", default-features = false, features = ["rustls-tls"] }
+walkdir = "2.5.0"
+which = "8"
+whoami = { version = "2.1.3", default-features = false, features = ["std"] }

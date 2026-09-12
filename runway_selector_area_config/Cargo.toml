@@ -9,7 +9,7 @@ description = "Layered area-package configuration types (manifest, area.toml, pr
 
 [dependencies]
 indexmap = { workspace = true }
-semver = { version = "1.0.27", features = ["serde"] }
+semver = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 serde_with = { workspace = true }
 thiserror = { workspace = true }
@@ -17,4 +17,4 @@ toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile = { workspace = true }

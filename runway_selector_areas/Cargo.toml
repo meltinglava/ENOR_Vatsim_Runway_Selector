@@ -8,20 +8,18 @@ repository.workspace = true
 description = "Area registry, install, and removal for runway_selector areas"
 
 [dependencies]
-runway_selector_area_config = { path = "../runway_selector_area_config" }
+runway_selector_area_config = { workspace = true }
 
-flate2 = { version = "1.1.6", default-features = false, features = ["rust_backend"] }
-hex = "0.4.3"
+flate2 = { workspace = true }
+hex = { workspace = true }
 reqwest = { workspace = true }
-semver = { version = "1.0.27", features = ["serde"] }
+semver = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10.9"
-tar = "0.4.45"
-tempfile = "3.27.0"
+sha2 = { workspace = true }
+tar = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros", "rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }

@@ -8,39 +8,37 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = "1.0.99"
-clap = { version = "4.6.1", features = ["derive"] }
-config = { version = "0.15.22", default-features = false, features = ["toml", "indexmap", "preserve_order"] }
+anyhow = { workspace = true }
+clap = { workspace = true }
+config = { workspace = true }
 dialoguer = { workspace = true }
-directories = "6.0.0"
+directories = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 jiff = { workspace = true }
-regex = "1.12.3"
-runway_plugin_api = { path = "../runway_plugin_api" }
-runway_selector_area_config = { path = "../runway_selector_area_config" }
-runway_selector_areas = { path = "../runway_selector_areas" }
-runway_selector_core = { path = "../runway_selector_core" }
-runway_selector_plugin_host = { path = "../runway_selector_plugin_host" }
-semver = "1.0.27"
-self_update = { version = "0.44.0", features = ["reqwest", "compression-zip-deflate", "archive-tar"], default-features = false }
+regex = { workspace = true }
+runway_plugin_api = { workspace = true }
+runway_selector_area_config = { workspace = true }
+runway_selector_areas = { workspace = true }
+runway_selector_core = { workspace = true }
+runway_selector_plugin_host = { workspace = true }
+semver = { workspace = true }
+self_update = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_with = { workspace = true }
-sysinfo = { version = "0.39.1", default-features = false, features = ["system", "serde"]}
-thiserror = { workspace = true }
+sysinfo = { workspace = true }
 tokio = { workspace = true }
-toml = { version = "1.1.2", features = ["preserve_order"] }
+toml = { workspace = true, features = ["preserve_order"] }
 tracing = { workspace = true }
-tracing-appender = "0.2.5"
+tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-unwrap = { workspace = true }
-walkdir = "2.5.0"
-whoami = { version = "2.1.2", default-features = false, features = ["std"] }
+walkdir = { workspace = true }
+whoami = { workspace = true }
 
 [target.'cfg(not(target_env = "musl"))'.dependencies]
-rfd = "0.17.2"
+rfd = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.27.0"
-tracing-test = { workspace = true }
+tempfile = { workspace = true }

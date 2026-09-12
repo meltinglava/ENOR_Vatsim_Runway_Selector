@@ -8,21 +8,20 @@ repository.workspace = true
 description = "Subprocess lifecycle and HTTP/JSON client wiring for area plugins"
 
 [dependencies]
-runway_plugin_api = { path = "../runway_plugin_api" }
-runway_selector_area_config = { path = "../runway_selector_area_config" }
+runway_plugin_api = { workspace = true }
+runway_selector_area_config = { workspace = true }
 
 reqwest = { workspace = true }
 rustls = { workspace = true }
-semver = "1.0.27"
+semver = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time", "net", "io-util"] }
 tracing = { workspace = true }
-which = "8"
+which = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.180"
+libc = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.27.0"
-tokio = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
